@@ -218,31 +218,48 @@ public partial class MainViewModel : ViewModelBase, IDisposable
             }
 
             target.State = EditorState.WaitingForBridge;
-            InjectStatus = "Bridge package injected. Waiting Unity to load Bridge and register via IPC ...";
-            AppendLog($"[Inject] Done for {target.ProjectName}. Waiting Bridge registration ...");
+            InjectStatus = "Manifest injected. Waiting Unity to recompile and Bridge to register ...";
+            AppendLog($"[Inject] Done for {target.ProjectName}. Waiting Bridge registration via IPC ...");
 
-            // Wait up to 60s for Bridge registration
-            for (int i = 0; i < 60; i++)
+            // Poll for Bridge registration: 250ms interval, 120s timeout
+            // Unity needs time to detect manifest change → resolve → compile → domain reload
+            var registered = false;
+            var pollStart  = DateTime.UtcNow;
+            var lastLogSec = -1;
+            while ((DateTime.UtcNow - pollStart).TotalSeconds < 120)
             {
                 if (_ipcHost.RegisteredBridges.ContainsKey(target.ProcessId))
+                {
+                    registered = true;
                     break;
-                await Task.Delay(1000);
+                }
+
+                var elapsed = (int)(DateTime.UtcNow - pollStart).TotalSeconds;
+                if (elapsed != lastLogSec && elapsed % 5 == 0)
+                {
+                    lastLogSec = elapsed;
+                    AppendLog($"[Wait] Waiting Bridge registration ... {elapsed}s elapsed");
+                }
+
+                InjectProgress = 100;
+                InjectStatus   = $"Waiting Bridge to register ... {elapsed}s";
+                await Task.Delay(250);
             }
 
-            if (_ipcHost.RegisteredBridges.ContainsKey(target.ProcessId))
+            if (registered)
             {
                 target.State   = EditorState.Connected;
                 ActiveEditor   = target;
                 InjectStatus   = "Connected";
                 InjectProgress = 100;
-                AppendLog($"[OK] {target.ProjectName} connected. All MCP calls will route to it.");
+                AppendLog($"[OK] {target.ProjectName} connected ({(int)(DateTime.UtcNow - pollStart).TotalSeconds}s). MCP calls will route to it.");
             }
             else
             {
                 target.State        = EditorState.Error;
-                target.ErrorMessage = "Bridge did not register within 60s. Unity may still be compiling, or project path detection is wrong.";
-                InjectStatus        = "Bridge not registered.";
-                AppendLog($"[Warn] Bridge for PID={target.ProcessId} not registered in time.");
+                target.ErrorMessage = "Bridge did not register within 120s. Check Unity console for compile errors.";
+                InjectStatus        = "Bridge not registered (timeout).";
+                AppendLog($"[Warn] Bridge for PID={target.ProcessId} not registered within 120s. Check Unity console for errors.");
             }
         }
         catch (Exception ex)

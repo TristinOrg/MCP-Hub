@@ -61,7 +61,7 @@ namespace Tristin.MCPBridge
                         direction:  PipeDirection.InOut,
                         options:    PipeOptions.Asynchronous);
 
-                    await pipe.ConnectAsync(3000, ct);
+                    await pipe.ConnectAsync(2000, ct);
                     pipe.ReadMode = PipeStreamMode.Byte;
 
                     using StreamReader  reader = new(pipe, new UTF8Encoding(false));
@@ -95,8 +95,10 @@ namespace Tristin.MCPBridge
                     {
                         while (!ct.IsCancellationRequested)
                         {
-                            await Task.Delay(5000, ct);
-                            await sendChannel.Writer.WriteAsync("{\"type\":\"ping\"}", ct);
+                            try { await Task.Delay(5000, ct); } catch (OperationCanceledException) { break; }
+                            try { await sendChannel.Writer.WriteAsync("{\"type\":\"ping\"}", ct); }
+                            catch (ChannelClosedException) { break; }
+                            catch (OperationCanceledException) { break; }
                         }
                     }, ct);
 
@@ -156,11 +158,11 @@ namespace Tristin.MCPBridge
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogWarning($"[MCPBridge] IPC disconnected, retry in 3s: {ex.Message}");
+                    Debug.LogWarning($"[MCPBridge] IPC disconnected, retry in 1s: {ex.Message}");
                 }
 
                 // Reconnect delay
-                try { await Task.Delay(3000, ct); } catch (OperationCanceledException) { throw; }
+                try { await Task.Delay(1000, ct); } catch (OperationCanceledException) { throw; }
             }
         }
 
