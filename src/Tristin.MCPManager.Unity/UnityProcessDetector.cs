@@ -17,16 +17,24 @@ public class UnityProcessDetector : IEditorDetector
 
     public async Task<IReadOnlyList<EditorInstance>> DetectAsync(CancellationToken cancellationToken = default)
     {
-        List<EditorInstance> result = new();
-        var processes = Process.GetProcessesByName("Unity");
+        List<EditorInstance> result     = new();
+        var                  processes = Process.GetProcessesByName("Unity");
+        var                  seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var process in processes)
         {
             try
             {
                 var instance = await ParseProcessAsync(process, cancellationToken);
-                if (instance != null)
+                // Only include processes with a real -projectPath (filters out
+                // child processes like shader compilers / asset import workers)
+                // and deduplicate by project path.
+                if (instance != null
+                    && instance.ProjectPath != "[Unknown]"
+                    && seenPaths.Add(instance.ProjectPath))
+                {
                     result.Add(instance);
+                }
             }
             catch
             {
@@ -79,14 +87,14 @@ public class UnityProcessDetector : IEditorDetector
 
     /// <summary>
     /// Parse a Unity process to extract project path, version, etc.
+    /// Returns null for child processes (shader compiler, asset import worker, etc.)
+    /// that don't carry -projectPath in their command line.
     /// </summary>
     private static async Task<EditorInstance?> ParseProcessAsync(Process process, CancellationToken ct)
     {
         // 1. Get executable path and version from the main module
-        string? exePath     = null;
-        string? version     = "Unknown";
-        string? projectPath = null;
-        string? projectName = null;
+        string? exePath = null;
+        string? version = "Unknown";
 
         try
         {
@@ -102,23 +110,16 @@ public class UnityProcessDetector : IEditorDetector
             // No permission to access main module — skip
         }
 
-        // 2. Try WMI (Windows) to read command line for -projectPath
-        projectPath = await GetProjectPathFromCommandLineAsync(process.Id, ct);
+        // 2. Read -projectPath from command line via WMI (Windows).
+        //    Only the main Editor process has -projectPath;
+        //    child processes (shader compiler, etc.) do not.
+        var projectPath = await GetProjectPathFromCommandLineAsync(process.Id, ct);
 
-        // 3. Fallback: infer from Editor.log
+        // 3. No -projectPath → this is a child process, not a real editor instance
         if (string.IsNullOrEmpty(projectPath))
-            projectPath = TryGetProjectPathFromLog(process.Id);
+            return null;
 
-        // 4. Still nothing — mark as unknown
-        if (string.IsNullOrEmpty(projectPath))
-        {
-            projectName = $"Unity_{process.Id}";
-            projectPath = "[Unknown]";
-        }
-        else
-        {
-            projectName = new DirectoryInfo(projectPath).Name;
-        }
+        var projectName = new DirectoryInfo(projectPath).Name;
 
         return new EditorInstance
         {
@@ -175,52 +176,6 @@ public class UnityProcessDetector : IEditorDetector
             // WMI failed — give up
         }
 
-        return null;
-    }
-
-    /// <summary>
-    /// Fallback: locate project path from Unity Editor.log.
-    /// Windows: %LOCALAPPDATA%\Unity\Editor\Editor.log
-    /// </summary>
-    private static string? TryGetProjectPathFromLog(int pid)
-    {
-        try
-        {
-            var logPath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Unity", "Editor", "Editor.log");
-
-            if (!File.Exists(logPath)) return null;
-
-            // Read with read-only sharing (Unity may hold the file)
-            using FileStream fs = new(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            using StreamReader sr = new(fs);
-
-            // Read last 500 lines
-            List<string> lines = new();
-            string? line;
-            while ((line = sr.ReadLine()) != null)
-            {
-                lines.Add(line);
-                if (lines.Count > 500) lines.RemoveAt(0);
-            }
-
-            // Match ProjectSettings/ path to infer project root
-            for (int i = lines.Count - 1; i >= 0; i--)
-            {
-                var l = lines[i];
-                var m = Regex.Match(l, @"['""](?<path>.+?)[\\/]ProjectSettings[\\/]");
-                if (m.Success)
-                {
-                    var p = m.Groups["path"].Value;
-                    if (Directory.Exists(p)) return p;
-                }
-            }
-        }
-        catch
-        {
-            // Ignore
-        }
         return null;
     }
 }
