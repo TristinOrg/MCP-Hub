@@ -8,7 +8,7 @@
         x:Class="Tristin.MCPManager.UI.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         Icon="/Assets/avalonia-logo.ico"
-        Title="Tristin MCP Runtime Manager"
+        Title="MCP Hub"
         MinWidth="860" MinHeight="560">
 
     <Design.DataContext>
@@ -24,7 +24,7 @@
                 <StackPanel Grid.Column="0" Orientation="Horizontal">
                     <TextBlock Text="⬢" Foreground="#5eead4" FontSize="28" VerticalAlignment="Center"/>
                     <StackPanel Margin="10,0,0,0">
-                        <TextBlock Text="Tristin MCP Runtime" Foreground="White" FontSize="18" FontWeight="Bold"/>
+                        <TextBlock Text="MCP Hub" Foreground="White" FontSize="18" FontWeight="Bold"/>
                         <TextBlock Text="Universal MCP Multi-Server Manager" Foreground="#a0a0b0" FontSize="11"/>
                     </StackPanel>
                 </StackPanel>
@@ -62,7 +62,7 @@
                         <ListBox.ItemTemplate>
                             <DataTemplate DataType="models:EditorInstance">
                                 <Grid ColumnDefinitions="Auto,*,Auto" Margin="6,6,6,6">
-                                    <!-- 状态标记（用 emoji 简化，避免复杂绑定） -->
+                                    <!-- Status indicator (emoji to avoid complex binding) -->
                                     <TextBlock Grid.Column="0" FontSize="16" VerticalAlignment="Center" Margin="0,0,10,0">
                                         <TextBlock.Styles>
                                             <Style Selector="TextBlock">
@@ -83,7 +83,7 @@
                         </ListBox.ItemTemplate>
                     </ListBox>
 
-                    <!-- 进度条 -->
+                    <!-- Progress bar -->
                     <ProgressBar Grid.Row="2" Value="{Binding InjectProgress}" Height="5"
                                  Foreground="#5eead4" Background="#333"
                                  Margin="0,0,0,6" IsIndeterminate="{Binding IsConnecting}"/>
@@ -171,6 +171,6 @@
 
         <!-- Footer -->
         <TextBlock Grid.Row="2" Foreground="#555" FontSize="10"
-                   Text="MIT License · Tristin MCP Runtime Manager © 2026 Tristin Wen · Not affiliated with Unity Technologies"/>
+                   Text="MIT License · MCP Hub © 2026 Tristin Wen · Not affiliated with Unity Technologies"/>
     </Grid>
 </Window>

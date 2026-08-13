@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Management;
 using System.Text.RegularExpressions;
 using Tristin.MCPManager.Core.Interfaces;
 using Tristin.MCPManager.Core.Models;
@@ -7,13 +8,11 @@ namespace Tristin.MCPManager.Unity;
 
 /// <summary>
 /// Detects running Unity Editor processes by scanning process list
-/// and parsing command-line arguments (-projectPath).
+/// and parsing command-line arguments (-projectPath) via WMI.
 /// </summary>
 public class UnityProcessDetector : IEditorDetector
 {
     public string EditorType => "Unity";
-
-    private readonly TimeSpan _watchExitCheckInterval = TimeSpan.FromMilliseconds(500);
 
     public async Task<IReadOnlyList<EditorInstance>> DetectAsync(CancellationToken cancellationToken = default)
     {
@@ -26,15 +25,10 @@ public class UnityProcessDetector : IEditorDetector
             try
             {
                 var instance = await ParseProcessAsync(process, cancellationToken);
-                // Only include processes with a real -projectPath (filters out
-                // child processes like shader compilers / asset import workers)
-                // and deduplicate by project path.
-                if (instance != null
-                    && instance.ProjectPath != "[Unknown]"
-                    && seenPaths.Add(instance.ProjectPath))
-                {
+                // Only include main editor processes with a real -projectPath,
+                // deduplicate by project path.
+                if (instance != null && seenPaths.Add(instance.ProjectPath))
                     result.Add(instance);
-                }
             }
             catch
             {
@@ -87,8 +81,7 @@ public class UnityProcessDetector : IEditorDetector
 
     /// <summary>
     /// Parse a Unity process to extract project path, version, etc.
-    /// Returns null for child processes (shader compiler, asset import worker, etc.)
-    /// that don't carry -projectPath in their command line.
+    /// Returns null for child processes (AssetImportWorker, ShaderCompiler, etc.).
     /// </summary>
     private static async Task<EditorInstance?> ParseProcessAsync(Process process, CancellationToken ct)
     {
@@ -110,14 +103,26 @@ public class UnityProcessDetector : IEditorDetector
             // No permission to access main module — skip
         }
 
-        // 2. Read -projectPath from command line via WMI (Windows).
-        //    Only the main Editor process has -projectPath;
-        //    child processes (shader compiler, etc.) do not.
-        var projectPath = await GetProjectPathFromCommandLineAsync(process.Id, ct);
+        // 2. Read command line via WMI (System.Management — not wmic.exe which is deprecated)
+        var commandLine = await GetCommandLineAsync(process.Id, ct);
+        if (string.IsNullOrEmpty(commandLine))
+            return null;
 
-        // 3. No -projectPath → this is a child process, not a real editor instance
+        // 3. Filter out child processes:
+        //    - AssetImportWorker: has -batchMode and -name "AssetImportWorker*"
+        //    - ShaderCompiler: similar pattern
+        if (commandLine.Contains("-batchMode", StringComparison.OrdinalIgnoreCase)
+            || commandLine.Contains("AssetImportWorker", StringComparison.OrdinalIgnoreCase)
+            || commandLine.Contains("ShaderCompiler", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        // 4. Extract -projectPath from command line
+        var projectPath = ExtractProjectPath(commandLine);
         if (string.IsNullOrEmpty(projectPath))
             return null;
+
+        // Normalize path separators
+        projectPath = projectPath.Replace('/', '\\');
 
         var projectName = new DirectoryInfo(projectPath).Name;
 
@@ -134,48 +139,55 @@ public class UnityProcessDetector : IEditorDetector
     }
 
     /// <summary>
-    /// Read process command line via WMI (Windows) to extract -projectPath.
+    /// Query WMI for a process command line using System.Management (not wmic.exe).
     /// </summary>
-    private static async Task<string?> GetProjectPathFromCommandLineAsync(int pid, CancellationToken ct)
+    private static async Task<string?> GetCommandLineAsync(int pid, CancellationToken ct)
     {
         if (!OperatingSystem.IsWindows())
             return null;
 
         try
         {
-            ProcessStartInfo startInfo = new()
+            using ManagementObjectSearcher searcher = new(
+                $"SELECT CommandLine FROM Win32_Process WHERE ProcessId = {pid}");
+
+            using var collection = searcher.Get();
+            foreach (var obj in collection)
             {
-                FileName               = "wmic.exe",
-                Arguments              = $"process where ProcessId={pid} get CommandLine /value",
-                UseShellExecute        = false,
-                RedirectStandardOutput = true,
-                CreateNoWindow         = true
-            };
-
-            using var proc = Process.Start(startInfo);
-            if (proc == null) return null;
-
-            var output = await proc.StandardOutput.ReadToEndAsync(ct);
-            await proc.WaitForExitAsync(ct);
-
-            // Match -projectPath "xxx" or -projectPath xxx
-            var match = Regex.Match(
-                output,
-                @"-projectPath\s+[""']?(?<path>[^""'\r\n]+)[""']?",
-                RegexOptions.IgnoreCase);
-
-            if (match.Success)
-            {
-                var path = match.Groups["path"].Value.Trim();
-                if (!string.IsNullOrEmpty(path) && Directory.Exists(path))
-                    return path;
+                var cmd = obj["CommandLine"]?.ToString();
+                if (!string.IsNullOrEmpty(cmd))
+                    return cmd;
             }
         }
         catch
         {
-            // WMI failed — give up
+            // WMI query failed
         }
 
-        return null;
+        return await Task.FromResult<string?>(null);
+    }
+
+    /// <summary>
+    /// Extract -projectPath value from a Unity command line.
+    /// Handles: -projectPath "path", -projectpath path, -projectPath path
+    /// </summary>
+    private static string? ExtractProjectPath(string commandLine)
+    {
+        // Match -projectPath followed by an optional quote, then the path
+        var match = Regex.Match(
+            commandLine,
+            @"-projectPath\s+[""']?(?<path>[^""'\s]+)[""']?",
+            RegexOptions.IgnoreCase);
+
+        if (!match.Success)
+            return null;
+
+        var path = match.Groups["path"].Value.Trim().Trim('"', '\'');
+
+        // Validate path exists
+        if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
+            return null;
+
+        return path;
     }
 }
