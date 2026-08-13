@@ -1,0 +1,176 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Tristin.MCPManager.UI.ViewModels"
+        xmlns:models="using:Tristin.MCPManager.Core.Models"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="1080" d:DesignHeight="680"
+        x:Class="Tristin.MCPManager.UI.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Icon="/Assets/avalonia-logo.ico"
+        Title="Tristin MCP Runtime Manager"
+        MinWidth="860" MinHeight="560">
+
+    <Design.DataContext>
+        <vm:MainViewModel />
+    </Design.DataContext>
+
+    <Grid RowDefinitions="Auto,*,Auto" Margin="14">
+
+        <!-- Header -->
+        <Border Grid.Row="0" Padding="12,10" CornerRadius="10"
+                Background="#2b2b37" BoxShadow="0 2 8 rgba(0,0,0,0.3)">
+            <Grid ColumnDefinitions="Auto,*,Auto">
+                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                    <TextBlock Text="⬢" Foreground="#5eead4" FontSize="28" VerticalAlignment="Center"/>
+                    <StackPanel Margin="10,0,0,0">
+                        <TextBlock Text="Tristin MCP Runtime" Foreground="White" FontSize="18" FontWeight="Bold"/>
+                        <TextBlock Text="Universal MCP Multi-Server Manager" Foreground="#a0a0b0" FontSize="11"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" Orientation="Vertical" HorizontalAlignment="Right">
+                    <TextBlock Foreground="#a0a0b0" FontSize="10">MCP Endpoint (Codex 连接地址)</TextBlock>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBox Grid.Column="0" Text="{Binding McpEndpoint}" Width="260"
+                                 FontFamily="Consolas" FontSize="12" Padding="6,4"
+                                 Background="#1e1e2a" Foreground="#5eead4" BorderThickness="0"/>
+                    </Grid>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Body -->
+        <Grid Grid.Row="1" ColumnDefinitions="380,*" Margin="0,12,0,12">
+
+            <!-- Left: Editor list -->
+            <Border Grid.Column="0" Padding="10" CornerRadius="10" Background="#23232e"
+                    BoxShadow="0 2 8 rgba(0,0,0,0.25)" Margin="0,0,6,0">
+                <Grid RowDefinitions="Auto,*,Auto,Auto,Auto">
+                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+                        <TextBlock Text="Unity Editors" Foreground="White" FontWeight="Bold" FontSize="14"
+                                   VerticalAlignment="Center"/>
+                        <Button Grid.Column="1" Content="↻" Command="{Binding ScanEditorsCommand}"
+                                IsEnabled="{Binding !IsScanning}"
+                                Padding="10,2" CornerRadius="6" FontSize="14"
+                                Background="#2e7dd6" Foreground="White" BorderThickness="0"/>
+                    </Grid>
+
+                    <ListBox Grid.Row="1" Margin="0,8,0,8" ItemsSource="{Binding EditorInstances}"
+                             SelectedItem="{Binding SelectedEditor}"
+                             Background="#1b1b24" BorderThickness="0">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="models:EditorInstance">
+                                <Grid ColumnDefinitions="Auto,*,Auto" Margin="6,6,6,6">
+                                    <!-- 状态标记（用 emoji 简化，避免复杂绑定） -->
+                                    <TextBlock Grid.Column="0" FontSize="16" VerticalAlignment="Center" Margin="0,0,10,0">
+                                        <TextBlock.Styles>
+                                            <Style Selector="TextBlock">
+                                                <Setter Property="Text" Value="⚪"/>
+                                            </Style>
+                                        </TextBlock.Styles>
+                                    </TextBlock>
+
+                                    <StackPanel Grid.Column="1" Margin="0,0,8,0">
+                                        <TextBlock Text="{Binding ProjectName}" Foreground="White" FontWeight="SemiBold" FontSize="14"/>
+                                        <TextBlock Text="{Binding DisplayName}" Foreground="#8a8a99" FontSize="10"/>
+                                        <TextBlock Text="{Binding ProjectPath}" Foreground="#6a6a78" FontSize="9"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding State}" Foreground="#5eead4" FontSize="10"/>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <!-- 进度条 -->
+                    <ProgressBar Grid.Row="2" Value="{Binding InjectProgress}" Height="5"
+                                 Foreground="#5eead4" Background="#333"
+                                 Margin="0,0,0,6" IsIndeterminate="{Binding IsConnecting}"/>
+                    <TextBlock Grid.Row="3" Text="{Binding InjectStatus}" Foreground="#9aa"
+                               FontSize="11" Margin="0,0,0,10" Height="14"/>
+
+                    <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8">
+                        <Button Content="Connect" Command="{Binding ConnectCommand}"
+                                IsEnabled="{Binding !IsConnecting}"
+                                Classes="Accent"
+                                HorizontalAlignment="Stretch" Grid.Column="0" Grid.ColumnSpan="1">
+                            <Button.Styles>
+                                <Style Selector="Button">
+                                    <Setter Property="Background" Value="#10b981"/>
+                                    <Setter Property="Foreground" Value="White"/>
+                                    <Setter Property="BorderThickness" Value="0"/>
+                                    <Setter Property="CornerRadius" Value="8"/>
+                                    <Setter Property="Padding" Value="14,8"/>
+                                    <Setter Property="FontWeight" Value="Bold"/>
+                                </Style>
+                            </Button.Styles>
+                        </Button>
+                        <Button Content="Disconnect" Command="{Binding DisconnectCommand}"
+                                IsEnabled="{Binding !IsDisconnecting}"
+                                HorizontalAlignment="Stretch">
+                            <Button.Styles>
+                                <Style Selector="Button">
+                                    <Setter Property="Background" Value="#6b7280"/>
+                                    <Setter Property="Foreground" Value="White"/>
+                                    <Setter Property="BorderThickness" Value="0"/>
+                                    <Setter Property="CornerRadius" Value="8"/>
+                                    <Setter Property="Padding" Value="14,8"/>
+                                    <Setter Property="FontWeight" Value="Bold"/>
+                                </Style>
+                            </Button.Styles>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Right: Active editor + Log -->
+            <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto,Auto" Margin="6,0,0,0">
+                <!-- Active Editor card -->
+                <Border Grid.Row="0" Padding="12" CornerRadius="10" Background="#23232e"
+                        BoxShadow="0 2 8 rgba(0,0,0,0.25)">
+                    <Grid ColumnDefinitions="Auto,*,Auto">
+                        <TextBlock Text="🎯" FontSize="26" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="Active Editor" Foreground="#888" FontSize="10"/>
+                            <TextBlock Foreground="White" FontSize="16" FontWeight="Bold">
+                                <TextBlock.Text>
+                                    <MultiBinding StringFormat="{}{0}  |  PID {1}  |  {2}">
+                                        <Binding Path="ActiveEditor.ProjectName" TargetNullValue="(none)"/>
+                                        <Binding Path="ActiveEditor.ProcessId"/>
+                                        <Binding Path="ActiveEditor.Version"/>
+                                    </MultiBinding>
+                                </TextBlock.Text>
+                            </TextBlock>
+                            <TextBlock Text="{Binding ActiveEditor.ProjectPath}" Foreground="#777" FontSize="10"
+                                       TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- Log -->
+                <Border Grid.Row="1" Padding="10" CornerRadius="10" Background="#15151b" Margin="0,12,0,12"
+                        BoxShadow="inset 0 0 0 1 rgba(255,255,255,0.04)">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                        <TextBlock Text="{Binding LogText}" Foreground="#d4d4d8" FontFamily="Consolas"
+                                   FontSize="12" TextWrapping="NoWrap"/>
+                    </ScrollViewer>
+                </Border>
+
+                <!-- Info strip -->
+                <Border Grid.Row="2" Padding="10,6" CornerRadius="8" Background="#1a1a24" Margin="0,0,0,6">
+                    <StackPanel Orientation="Horizontal" Spacing="16">
+                        <TextBlock Foreground="#888" FontSize="10">
+                            <Run Text="Codex 配置方法："/>
+                            <Run Foreground="#5eead4" Text="mcp.json 添加 command: curl -X POST http://localhost:9000/ + JSON-RPC body"/>
+                        </TextBlock>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Grid>
+
+        <!-- Footer -->
+        <TextBlock Grid.Row="2" Foreground="#555" FontSize="10"
+                   Text="MIT License · Tristin MCP Runtime Manager © 2026 Tristin Wen · Not affiliated with Unity Technologies"/>
+    </Grid>
+</Window>
