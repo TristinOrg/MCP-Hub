@@ -5,7 +5,6 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Input;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Tristin.MCPManager.Core.Interfaces;
@@ -62,9 +61,30 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     private EditorInstance? _activeEditor;
 
     // ========== Commands (explicit init to avoid MVVMTK source generator mismatch) ==========
-    public ICommand ScanEditorsCommand { get; }
-    public ICommand ConnectCommand     { get; }
-    public ICommand DisconnectCommand  { get; }
+    public AsyncRelayCommand ScanEditorsCommand { get; }
+    public AsyncRelayCommand ConnectCommand     { get; }
+    public AsyncRelayCommand DisconnectCommand  { get; }
+
+    partial void OnSelectedEditorChanged(EditorInstance? value)
+    {
+        ConnectCommand.NotifyCanExecuteChanged();
+        DisconnectCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnIsConnectingChanged(bool value)
+    {
+        ConnectCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnIsDisconnectingChanged(bool value)
+    {
+        DisconnectCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnIsScanningChanged(bool value)
+    {
+        ScanEditorsCommand.NotifyCanExecuteChanged();
+    }
 
     partial void OnActiveEditorChanged(EditorInstance? value)
     {
