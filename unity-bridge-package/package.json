@@ -1,0 +1,17 @@
+{
+  "name":        "com.tristin.unity-mcp-bridge",
+  "version":     "0.1.0",
+  "displayName": "Tristin MCP Runtime Bridge",
+  "description": "Minimal Unity Editor Bridge for Tristin MCP Runtime Manager. Handles IPC with Runtime Manager and executes UnityEditor API commands.",
+  "unity":       "2021.3",
+  "author": {
+    "name":  "Tristin Wen",
+    "email": "Tristin_Wen@outlook.com"
+  },
+  "keywords": [
+    "MCP",
+    "Editor",
+    "Automation",
+    "AI"
+  ]
+}
