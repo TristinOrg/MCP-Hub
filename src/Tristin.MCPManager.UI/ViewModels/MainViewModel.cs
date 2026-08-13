@@ -111,6 +111,9 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         _ipcHost  = new NamedPipeIpcBridgeHost();
         _mcpProxy = new SimpleHttpMcpServerProxy(_ipcHost);
 
+        // Wire IPC host diagnostic log sink to UI log
+        NamedPipeIpcBridgeHost.LogSink = AppendLog;
+
         _mcpProxy.ActiveEditorChanged += (_, e) => ActiveEditor = e;
         _ipcHost.BridgeRegistered     += OnBridgeRegistered;
         _ipcHost.BridgeDisconnected   += OnBridgeDisconnected;

@@ -17,6 +17,13 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
 {
     public const string DefaultPipeName = "TristinMCP_RuntimeManager";
 
+    /// <summary>
+    /// Diagnostic log sink — set by the UI layer to surface IPC events.
+    /// </summary>
+    public static Action<string>? LogSink { get; set; }
+
+    private static void Log(string msg) => LogSink?.Invoke($"[IPC] {msg}");
+
     private readonly ConcurrentDictionary<int, BridgeConnection> _bridges    = new();
     private readonly ConcurrentDictionary<int, PendingCall>       _pending    = new();
     private int                                                   _nextCallId = 1;
@@ -67,8 +74,9 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
             throw new InvalidOperationException($"Bridge PID={targetPid} not connected.");
 
         var callId      = Interlocked.Increment(ref _nextCallId);
-        var argsEscaped = JsonEncodedText.Encode(arguments ?? "{}").ToString().Trim('"');
-        var line        = $"{{\"id\":{callId},\"type\":\"tool\",\"name\":\"{toolName}\",\"args\":\"{argsEscaped}\"}}";
+        // Pass args as raw JSON (no extra escaping) — Bridge regex extracts it directly.
+        var rawArgs     = arguments ?? "{}";
+        var line        = $"{{\"id\":{callId},\"type\":\"tool\",\"name\":\"{toolName}\",\"args\":{rawArgs}}}";
 
         TaskCompletionSource<string> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
         using var reg = cancellationToken.Register(() => tcs.TrySetCanceled());
@@ -162,23 +170,28 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
 
     private async Task RunAcceptLoopAsync(string pipeName, CancellationToken ct)
     {
+        Log($"Accept loop started on NamedPipe '{pipeName}'");
         while (!ct.IsCancellationRequested)
         {
             NamedPipeServerStream? server = null;
             try
             {
                 server = new NamedPipeServerStream(
-                    pipeName:             pipeName,
-                    direction:            PipeDirection.InOut,
+                    pipeName:                  pipeName,
+                    direction:                 PipeDirection.InOut,
                     maxNumberOfServerInstances: NamedPipeServerStream.MaxAllowedServerInstances,
-                    transmissionMode:     PipeTransmissionMode.Byte,
-                    options:              PipeOptions.Asynchronous);
+                    transmissionMode:          PipeTransmissionMode.Byte,
+                    options:                   PipeOptions.Asynchronous);
 
+                Log($"Waiting for Bridge connection ...");
                 await server.WaitForConnectionAsync(ct);
+                Log($"Client connected — spawning handler");
 
-                // Each connection gets its own task
-                _ = Task.Run(() => HandleConnectionAsync(server, ct), ct);
-                server = null; // ownership transferred
+                // Capture the pipe value before setting server to null.
+                // The lambda captures by reference, so we need a local copy.
+                var pipe = server;
+                _ = Task.Run(() => HandleConnectionAsync(pipe, ct), ct);
+                server = null; // ownership transferred to handler
             }
             catch (OperationCanceledException)
             {
@@ -196,36 +209,46 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
     private async Task HandleConnectionAsync(NamedPipeServerStream pipe, CancellationToken ct)
     {
         BridgeConnection? bridgeConn = null;
+        var connId = Guid.NewGuid().ToString("N")[..8];
         try
         {
-            using (pipe)
+            Log($"[{connId}] Connection established");
+            // Do NOT wrap pipe in its own using — StreamReader/StreamWriter will
+            // dispose it when they are disposed (leaveOpen defaults to false).
             using (StreamReader reader = new(pipe, new UTF8Encoding(false)))
             using (StreamWriter writer = new(pipe, new UTF8Encoding(false)) { NewLine = "\n", AutoFlush = true })
             {
                 bridgeConn = new BridgeConnection(writer);
 
                 string? line;
+                int lineCount = 0;
                 while ((line = await reader.ReadLineAsync()) != null)
                 {
+                    lineCount++;
                     if (string.IsNullOrWhiteSpace(line)) continue;
 
-                    await ProcessLineAsync(line, bridgeConn, ct);
+                    if (lineCount <= 3 || lineCount % 20 == 0)
+                        Log($"[{connId}] RECV line #{lineCount}: {Truncate(line, 200)}");
+
+                    await ProcessLineAsync(line, bridgeConn, ct, connId);
                 }
+                Log($"[{connId}] Pipe closed after {lineCount} lines");
             }
         }
         catch (OperationCanceledException)
         {
-            // Normal shutdown
+            Log($"[{connId}] HandleConnection cancelled");
         }
-        catch
+        catch (Exception ex)
         {
-            // Connection lost
+            Log($"[{connId}] HandleConnection exception: {ex.Message}");
         }
         finally
         {
             if (bridgeConn?.Registration != null)
             {
                 var pid = bridgeConn.Registration.Pid;
+                Log($"[{connId}] Bridge PID={pid} disconnected");
                 _bridges.TryRemove(pid, out _);
                 // Clean up all pending calls for this PID
                 foreach (var (callId, pc) in _pending.ToArray())
@@ -242,7 +265,11 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
         }
     }
 
-    private Task ProcessLineAsync(string line, BridgeConnection bridgeConn, CancellationToken ct)
+    private static string Truncate(string s, int maxLen)
+        => s.Length <= maxLen ? s : s[..maxLen] + "...(+" + (s.Length - maxLen) + ")";
+
+
+    private Task ProcessLineAsync(string line, BridgeConnection bridgeConn, CancellationToken ct, string connId = "")
     {
         // 1) register
         if (Regex.IsMatch(line, "\"type\"\\s*:\\s*\"register\""))
@@ -267,10 +294,18 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
                     };
                     bridgeConn.Registration = reg;
                     _bridges[reg.Pid]       = bridgeConn;
-                    try { BridgeRegistered?.Invoke(this, reg); } catch { /* ignore */ }
+                    Log($"[{connId}] REGISTERED Bridge PID={reg.Pid} project={reg.ProjectName} path={reg.ProjectPath}");
+                    try { BridgeRegistered?.Invoke(this, reg); } catch (Exception ex) { Log($"[{connId}] BridgeRegistered callback threw: {ex.Message}"); }
+                }
+                else
+                {
+                    Log($"[{connId}] Parse register FAILED (no pid). Line: {Truncate(line, 200)}");
                 }
             }
-            catch { /* parse failure — ignore */ }
+            catch (Exception ex)
+            {
+                Log($"[{connId}] Parse register exception: {ex.Message}");
+            }
             return Task.CompletedTask;
         }
 

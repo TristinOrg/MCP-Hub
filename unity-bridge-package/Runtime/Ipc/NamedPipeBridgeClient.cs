@@ -125,17 +125,41 @@ namespace Tristin.MCPBridge
                             if (line.Contains("\"type\":\"pong\""))
                                 continue;
 
-                            // tool call: {"id":N,"type":"tool","name":"...","args":"..."}
+                            // tool call: {"id":N,"type":"tool","name":"...","args":{...}}
                             var idMatch = System.Text.RegularExpressions.Regex.Match(line, "\"id\"\\s*:\\s*(?<id>\\d+)");
                             var nameMatch = System.Text.RegularExpressions.Regex.Match(line, "\"name\"\\s*:\\s*\"(?<name>[^\"]+)\"");
-                            var argsMatch = System.Text.RegularExpressions.Regex.Match(line, "\"args\"\\s*:\\s*\"(?<args>.*?)\"\\s*\\}");
 
                             if (idMatch.Success && nameMatch.Success)
                             {
                                 var id = idMatch.Groups["id"].Value;
                                 var name = nameMatch.Groups["name"].Value;
-                                var args = argsMatch.Success ? argsMatch.Groups["args"].Value : "{}";
-                                args = args.Replace("\\\"", "\"").Replace("\\\\", "\\");
+
+                                // Extract args: everything after "args": until the closing }
+                                // args can be a raw JSON object {...} or a string "..."
+                                var argsIdx = line.IndexOf("\"args\"");
+                                string args = "{}";
+                                if (argsIdx >= 0)
+                                {
+                                    var afterArgs = line.Substring(argsIdx + 6).TrimStart();
+                                    if (afterArgs.StartsWith("{"))
+                                    {
+                                        // Raw JSON object — find matching closing brace
+                                        int depth = 0;
+                                        int end = -1;
+                                        for (int i = 0; i < afterArgs.Length; i++)
+                                        {
+                                            if (afterArgs[i] == '{') depth++;
+                                            else if (afterArgs[i] == '}') { depth--; if (depth == 0) { end = i; break; } }
+                                        }
+                                        if (end > 0) args = afterArgs.Substring(0, end + 1);
+                                    }
+                                    else if (afterArgs.StartsWith("\""))
+                                    {
+                                        // String args — extract until closing quote
+                                        var strEnd = afterArgs.IndexOf('"', 1);
+                                        if (strEnd > 0) args = afterArgs.Substring(1, strEnd - 1);
+                                    }
+                                }
 
                                 string result;
                                 try

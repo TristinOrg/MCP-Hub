@@ -2,7 +2,7 @@
   "name":        "com.tristin.unity-mcp-bridge",
   "version":     "0.1.0",
   "displayName": "Tristin MCP Runtime Bridge",
-  "description": "Minimal Unity Editor Bridge for Tristin MCP Runtime Manager. Handles IPC with Runtime Manager and executes UnityEditor API commands.",
+  "description": "Minimal Unity Editor Bridge for Tristin MCP Runtime Manager. Forwards MCP tool calls to Coplay MCP server.",
   "unity":       "2021.3",
   "author": {
     "name":  "Tristin Wen",
@@ -13,5 +13,8 @@
     "Editor",
     "Automation",
     "AI"
-  ]
+  ],
+  "dependencies": {
+    "com.coplaydev.unity-mcp": "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main"
+  }
 }

@@ -1,10 +1,18 @@
+// Manages Unity Packages/manifest.json: backup, inject Bridge dependency, restore.
+// The key insight: Unity's Package Manager FileSystemWatcher only triggers on
+// actual content changes to manifest.json — touching timestamps or deleting
+// packages-lock.json is NOT reliable. We must write new content to the file.
+//
+// Author: Tristin Wen
+// Email:  Tristin_Wen@outlook.com
+
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace Tristin.MCPManager.Unity;
 
 /// <summary>
-/// Manages Unity Packages/manifest.json: backup, inject Bridge dependency, restore.
+/// Manages Unity Packages/manifest.json for Bridge injection and cleanup.
 /// </summary>
 public class UnityManifestManager
 {
@@ -42,7 +50,7 @@ public class UnityManifestManager
 
         Directory.CreateDirectory(backupDir);
 
-        // If a previous backup exists, archive it with a timestamp
+        // Archive any previous backup with timestamp so we never lose the original
         if (File.Exists(backupPath))
         {
             var tsBackup = Path.Combine(backupDir, $"manifest_{DateTime.Now:yyyyMMdd_HHmmss}.json.bak");
@@ -60,9 +68,10 @@ public class UnityManifestManager
 
     /// <summary>
     /// Inject the local Bridge package dependency into manifest.json.
+    /// CRITICAL: We must WRITE NEW CONTENT to trigger Unity's FileSystemWatcher.
+    /// Touching timestamps or deleting packages-lock.json does NOT reliably
+    /// trigger Unity's Package Manager re-resolution.
     /// </summary>
-    /// <param name="projectPath">Unity project path.</param>
-    /// <param name="bridgePackagePath">On-disk path to the Bridge package.</param>
     public static async Task InjectBridgeDependencyAsync(
         string projectPath,
         string bridgePackagePath,
@@ -77,15 +86,26 @@ public class UnityManifestManager
         if (!normalizedPath.StartsWith("file:"))
             normalizedPath = "file:" + normalizedPath;
 
+        // Read current manifest
         var json = await File.ReadAllTextAsync(manifestPath, ct);
         var doc  = JsonNode.Parse(json) ?? new JsonObject();
         var deps = doc["dependencies"] as JsonObject ?? new JsonObject();
 
+        // Add/update the bridge dependency
         deps[BridgePackageName] = normalizedPath;
         doc["dependencies"]     = deps;
 
-        await using FileStream fs = new(manifestPath, FileMode.Truncate, FileAccess.Write);
-        await JsonSerializer.SerializeAsync(fs, doc, JsonOptions, ct);
+        // Serialize to new JSON string
+        var newContent = JsonSerializer.Serialize(doc, JsonOptions);
+
+        // CRITICAL: Write new content to trigger Unity's FileSystemWatcher.
+        // This MUST be a genuine content change — Unity watches for Changed events,
+        // not just timestamp modifications.
+        await File.WriteAllTextAsync(manifestPath, newContent, ct);
+
+        // Small delay to ensure Unity's FSW has time to observe the change
+        try { await Task.Delay(200, ct); }
+        catch (OperationCanceledException) { /* ignore */ }
     }
 
     /// <summary>
@@ -100,8 +120,9 @@ public class UnityManifestManager
         if (!File.Exists(backupPath))
             return Task.FromResult(false);
 
-        // Restore manifest
-        File.Copy(backupPath, manifestPath, true);
+        // Restore manifest by writing the backed-up content
+        var backupContent = File.ReadAllText(backupPath);
+        File.WriteAllText(manifestPath, backupContent);
 
         // Clean up backup directory
         try

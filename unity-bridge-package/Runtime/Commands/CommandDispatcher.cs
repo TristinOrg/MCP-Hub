@@ -3,6 +3,7 @@
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using UnityEditor;
 using UnityEngine;
 
@@ -40,41 +41,35 @@ namespace Tristin.MCPBridge
             string?   result   = null;
             Exception? error   = null;
 
-            // Marshal to main thread
-            if (EditorApplication.isPlayingOrWillChangePlaymode)
+            // Always marshal to main thread — Unity APIs cannot be called from
+            // background threads (IPC receive thread, etc).
+            var dispatched = false;
+            EditorApplication.CallbackFunction cb = null!;
+            cb = () =>
             {
-                result = handler(argsJson);
-            }
-            else
-            {
-                var dispatched = false;
-                EditorApplication.CallbackFunction cb = null!;
-                cb = () =>
+                try
                 {
-                    try
-                    {
-                        Volatile.Write(ref result, handler(argsJson));
-                    }
-                    catch (Exception ex)
-                    {
-                        Volatile.Write(ref error, ex);
-                    }
-                    finally
-                    {
-                        EditorApplication.update -= cb;
-                        Volatile.Write(ref dispatched, true);
-                    }
-                };
-                EditorApplication.update += cb;
-
-                // Spin-wait for main thread execution
-                var spinStart = DateTime.UtcNow;
-                while (!Volatile.Read(ref dispatched))
-                {
-                    if ((DateTime.UtcNow - spinStart).TotalSeconds > 30)
-                        throw new TimeoutException($"Command '{toolName}' timed out on main thread.");
-                    System.Threading.Thread.Sleep(10);
+                    result = handler(argsJson);
                 }
+                catch (Exception ex)
+                {
+                    error = ex;
+                }
+                finally
+                {
+                    EditorApplication.update -= cb;
+                    dispatched = true;
+                }
+            };
+            EditorApplication.update += cb;
+
+            // Spin-wait for main thread execution
+            var spinStart = DateTime.UtcNow;
+            while (!dispatched)
+            {
+                if ((DateTime.UtcNow - spinStart).TotalSeconds > 30)
+                    throw new TimeoutException($"Command '{toolName}' timed out on main thread.");
+                System.Threading.Thread.Sleep(10);
             }
 
             if (error != null) throw new Exception(error.Message, error);
@@ -120,7 +115,7 @@ namespace Tristin.MCPBridge
 
         private static string HandleSaveProject()
         {
-            EditorApplication.SaveAssets();
+            AssetDatabase.SaveAssets();
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
             return "\"ok\"";
