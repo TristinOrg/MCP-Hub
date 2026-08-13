@@ -1,4 +1,4 @@
-// Quick test: multi-instance routing via MCP proxy
+// Quick test: start IPC host + MCP proxy, call create_prefab via HTTP
 using Tristin.MCPManager.Core.Ipc;
 using Tristin.MCPManager.Core.Mcp;
 
@@ -29,54 +29,66 @@ if (ipcHost.RegisteredBridges.Count == 0)
     return;
 }
 
-using var client = new HttpClient();
-
-// Step 1: list_instances
-Console.WriteLine("\n=== Step 1: unity.list_instances ===");
-var resp1 = await CallMcp(client, "unity.list_instances", new { });
-Console.WriteLine(resp1);
-
-// Step 2: set_active_instance
-var firstPid = ipcHost.RegisteredBridges.Keys.First();
-Console.WriteLine($"\n=== Step 2: unity.set_active_instance (PID={firstPid}) ===");
-var resp2 = await CallMcp(client, "unity.set_active_instance", new { pid = firstPid });
-Console.WriteLine(resp2);
-
-// Step 3: create_prefab
-Console.WriteLine("\n=== Step 3: unity.create_prefab ===");
-var resp3 = await CallMcp(client, "unity.create_prefab", new
+// Set active editor
+var firstBridge = ipcHost.RegisteredBridges.Values.First();
+mcpProxy.ActiveEditor = new Tristin.MCPManager.Core.Models.EditorInstance
 {
-    path = "Assets/Prefabs/test.prefab",
-    children = new object[]
+    EditorType  = firstBridge.EditorType,
+    ProcessId   = firstBridge.Pid,
+    ProjectName = firstBridge.ProjectName,
+    ProjectPath = firstBridge.ProjectPath,
+    Version     = ""
+};
+Console.WriteLine($"Active editor set: PID={firstBridge.Pid} project={firstBridge.ProjectName}");
+
+// Call create_prefab
+var body = new
+{
+    jsonrpc = "2.0",
+    id = 1,
+    method = "tools/call",
+    @params = new
     {
-        new { name = "UI", components = new[] { "RectTransform" } },
-        new { name = "Text", components = new[] { "TextMeshPro", "RectTransform" } }
+        name = "unity.create_prefab",
+        arguments = new
+        {
+            path = "Assets/Prefabs/test.prefab",
+            children = new object[]
+            {
+                new { name = "UI", components = new[] { "RectTransform" } },
+                new { name = "Text", components = new[] { "TextMeshPro", "RectTransform" } }
+            }
+        }
     }
-});
-Console.WriteLine(resp3);
+};
 
-// Step 4: create_text
-Console.WriteLine("\n=== Step 4: unity.create_text ===");
-var resp4 = await CallMcp(client, "unity.create_text", new
+var json = System.Text.Json.JsonSerializer.Serialize(body);
+Console.WriteLine($"Sending: {json}");
+
+using var client = new HttpClient();
+var resp = await client.PostAsync("http://localhost:9001/",
+    new StringContent(json, System.Text.Encoding.UTF8, "application/json"));
+var result = await resp.Content.ReadAsStringAsync();
+Console.WriteLine($"Response ({resp.StatusCode}): {result}");
+
+// Also call create_text
+var body2 = new
 {
-    path = "Assets/Scripts/Test.cs",
-    content = "public class Test { public void Hello() { Debug.Log(\"Hello from MCP!\"); } }"
-});
-Console.WriteLine(resp4);
-
-Console.WriteLine("\n=== Done ===");
-
-static async Task<string> CallMcp(HttpClient client, string toolName, object args)
-{
-    var body = new
+    jsonrpc = "2.0",
+    id = 2,
+    method = "tools/call",
+    @params = new
     {
-        jsonrpc = "2.0",
-        id = 1,
-        method = "tools/call",
-        @params = new { name = toolName, arguments = args }
-    };
-    var json = System.Text.Json.JsonSerializer.Serialize(body);
-    var resp = await client.PostAsync("http://localhost:9001/",
-        new StringContent(json, System.Text.Encoding.UTF8, "application/json"));
-    return $"({resp.StatusCode}) {await resp.Content.ReadAsStringAsync()}";
-}
+        name = "unity.create_text",
+        arguments = new
+        {
+            path = "Assets/Scripts/Test.cs",
+            content = "public class Test { public void Hello() { Debug.Log(\"Hello from MCP!\"); } }"
+        }
+    }
+};
+var json2 = System.Text.Json.JsonSerializer.Serialize(body2);
+var resp2 = await client.PostAsync("http://localhost:9001/",
+    new StringContent(json2, System.Text.Encoding.UTF8, "application/json"));
+var result2 = await resp2.Content.ReadAsStringAsync();
+Console.WriteLine($"Response ({resp2.StatusCode}): {result2}");

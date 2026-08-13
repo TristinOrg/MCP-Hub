@@ -14,5 +14,7 @@
     "Automation",
     "AI"
   ],
-  "dependencies": {}
+  "dependencies": {
+    "com.coplaydev.unity-mcp": "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main"
+  }
 }

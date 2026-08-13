@@ -228,110 +228,33 @@ public class SimpleHttpMcpServerProxy : IMcpServerProxy, IAsyncDisposable
 
     private async Task<JsonNode> HandleToolsListAsync(CancellationToken ct)
     {
-        // Built-in routing tools (always available)
-        JsonArray arr = new()
-        {
-            new JsonObject
-            {
-                ["name"]        = "unity.list_instances",
-                ["description"] = "List all connected Unity Editor instances",
-                ["inputSchema"] = new JsonObject { ["type"] = "object", ["properties"] = new JsonObject() }
-            },
-            new JsonObject
-            {
-                ["name"]        = "unity.set_active_instance",
-                ["description"] = "Set the active Unity Editor instance for subsequent tool calls",
-                ["inputSchema"] = new JsonObject
-                {
-                    ["type"] = "object",
-                    ["properties"] = new JsonObject
-                    {
-                        ["pid"] = new JsonObject { ["type"] = "integer", ["description"] = "Process ID of the target Unity Editor" }
-                    },
-                    ["required"] = new JsonArray { "pid" }
-                }
-            }
-        };
+        if (ActiveEditor == null)
+            return new JsonArray();
 
-        // Add tools from the active editor's Bridge
-        if (ActiveEditor != null)
+        var tools = await _bridgeHost.ListToolsAsync(ActiveEditor.ProcessId, ct);
+        JsonArray arr = new();
+        foreach (var t in tools)
         {
-            var tools = await _bridgeHost.ListToolsAsync(ActiveEditor.ProcessId, ct);
-            foreach (var t in tools)
+            arr.Add(new JsonObject
             {
-                arr.Add(new JsonObject
-                {
-                    ["name"]        = t.Name,
-                    ["description"] = t.Description,
-                    ["inputSchema"] = JsonSerializer.SerializeToNode(t.InputSchema ?? new { })
-                });
-            }
+                ["name"]        = t.Name,
+                ["description"] = t.Description,
+                ["inputSchema"] = JsonSerializer.SerializeToNode(t.InputSchema ?? new { })
+            });
         }
         return arr;
     }
 
     private async Task<JsonNode> HandleToolsCallAsync(JsonNode? @params, CancellationToken ct)
     {
+        if (ActiveEditor == null)
+            throw new InvalidOperationException("No active Unity Editor. Select one in Runtime Manager first.");
+
         var name = @params?["name"]?.GetValue<string>()
                    ?? throw new ArgumentException("Missing 'name' in params.");
 
         var argsNode = @params?["arguments"];
         var argsJson = argsNode?.ToJsonString() ?? "{}";
-
-        // Built-in routing tools
-        if (name == "unity.list_instances")
-        {
-            var bridges = _bridgeHost.RegisteredBridges;
-            JsonArray arr = new();
-            foreach (var (pid, reg) in bridges)
-            {
-                arr.Add(new JsonObject
-                {
-                    ["pid"]         = pid,
-                    ["editorType"]  = reg.EditorType,
-                    ["projectName"] = reg.ProjectName,
-                    ["projectPath"] = reg.ProjectPath,
-                    ["endpoint"]    = reg.Endpoint,
-                    ["isActive"]    = ActiveEditor?.ProcessId == pid
-                });
-            }
-            return new JsonObject
-            {
-                ["content"] = new JsonArray
-                {
-                    new JsonObject { ["type"] = "text", ["text"] = arr.ToJsonString() }
-                }
-            };
-        }
-
-        if (name == "unity.set_active_instance")
-        {
-            var pid = (int)(@params?["arguments"]?["pid"]?.GetValue<int>()
-                        ?? throw new ArgumentException("Missing 'pid' in arguments."));
-
-            if (!_bridgeHost.RegisteredBridges.TryGetValue(pid, out var reg))
-                throw new InvalidOperationException($"No Bridge registered for PID={pid}.");
-
-            ActiveEditor = new EditorInstance
-            {
-                EditorType  = reg.EditorType,
-                ProcessId   = reg.Pid,
-                ProjectName = reg.ProjectName,
-                ProjectPath = reg.ProjectPath,
-                Version     = ""
-            };
-
-            return new JsonObject
-            {
-                ["content"] = new JsonArray
-                {
-                    new JsonObject { ["type"] = "text", ["text"] = $"Active instance set to PID={pid} ({reg.ProjectName})" }
-                }
-            };
-        }
-
-        if (ActiveEditor == null)
-            throw new InvalidOperationException("No active Unity Editor. Call unity.set_active_instance first.");
 
         var resultStr = await _bridgeHost.InvokeToolAsync(
             ActiveEditor.ProcessId, name, argsJson, ct);
