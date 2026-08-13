@@ -2,7 +2,7 @@
 
 Unity MCP Hub is a desktop client that gives MCP clients such as Codex one stable endpoint for controlling multiple Unity Editor instances through the official [Coplay MCP for Unity](https://github.com/CoplayDev/unity-mcp).
 
-The Hub does not implement Unity commands. It temporarily injects a thin UPM bootstrap package, loads Coplay's package, starts the matching Coplay MCP server, and forwards `http://127.0.0.1:9000/mcp` to it. Coplay owns tool discovery, execution, and per-client multi-instance routing.
+The Hub does not implement Unity commands. It downloads and validates one pinned Coplay Unity package into a shared local cache, temporarily injects local UPM references, starts the matching Coplay MCP server, and forwards `http://127.0.0.1:9000/mcp` to it. Coplay owns tool discovery, execution, and per-client multi-instance routing.
 
 ## Requirements
 
@@ -23,7 +23,7 @@ Then:
 3. Configure Codex with the HTTP MCP URL `http://127.0.0.1:9000/mcp`.
 4. When multiple editors are connected, call Coplay's `set_active_instance` in each MCP client session to select its Unity target.
 
-Disconnect restores the original `Packages/manifest.json` and removes the temporary backup.
+Disconnect restores the exact original `Packages/manifest.json` and `Packages/packages-lock.json` state. A recovery journal restores unfinished injections the next time the Hub starts after a crash.
 
 ## Architecture
 
@@ -42,7 +42,7 @@ Codex and other MCP clients
  Coplay pkg    Coplay pkg
 ```
 
-The injected `com.tristin.unity-mcp-bridge` package contains only startup configuration and a pinned dependency on Coplay. It deliberately contains no duplicated tool handlers.
+The injected `com.tristin.unity-mcp-bridge` package contains only startup configuration and a pinned dependency on Coplay. Both it and Coplay are injected with local `file:` references; individual Unity projects never clone Coplay. The bootstrap deliberately contains no duplicated tool handlers.
 
 ## Build
 

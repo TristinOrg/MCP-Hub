@@ -15,6 +15,6 @@
     "AI"
   ],
   "dependencies": {
-    "com.coplaydev.unity-mcp": "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#v10.1.0"
+    "com.coplaydev.unity-mcp": "10.1.0"
   }
 }

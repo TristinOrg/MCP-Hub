@@ -1,23 +1,20 @@
-// Manages Unity Packages/manifest.json: backup, inject Bridge dependency, restore.
-// The key insight: Unity's Package Manager FileSystemWatcher only triggers on
-// actual content changes to manifest.json — touching timestamps or deleting
-// packages-lock.json is NOT reliable. We must write new content to the file.
-//
-// Author: Tristin Wen
-// Email:  Tristin_Wen@outlook.com
-
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace Tristin.MCPManager.Unity;
 
 /// <summary>
-/// Manages Unity Packages/manifest.json for Bridge injection and cleanup.
+/// Applies and restores transactional Unity package changes made by the Hub.
 /// </summary>
 public static class UnityManifestManager
 {
-    public const string BackupFolderName   = ".tristin_mcp_backup";
-    public const string BridgePackageName  = "com.tristin.unity-mcp-bridge";
+    public const string BackupFolderName  = ".tristin_mcp_backup";
+    public const string BridgePackageName = "com.tristin.unity-mcp-bridge";
+    public const string CoplayPackageName = CoplayPackageCache.PackageName;
+
+    private const string ManifestFileName    = "manifest.json";
+    private const string LockFileName        = "packages-lock.json";
+    private const string MissingLockFileName = "packages-lock.missing";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -28,7 +25,13 @@ public static class UnityManifestManager
     /// Get the manifest.json path for a project.
     /// </summary>
     public static string GetManifestPath(string projectPath)
-        => Path.Combine(projectPath, "Packages", "manifest.json");
+        => Path.Combine(projectPath, "Packages", ManifestFileName);
+
+    /// <summary>
+    /// Gets the packages-lock.json path for a project.
+    /// </summary>
+    public static string GetLockPath(string projectPath)
+        => Path.Combine(projectPath, "Packages", LockFileName);
 
     /// <summary>
     /// Get the backup directory path.
@@ -37,13 +40,13 @@ public static class UnityManifestManager
         => Path.Combine(projectPath, BackupFolderName);
 
     /// <summary>
-    /// Back up the current manifest.json.
+    /// Backs up package state exactly once, including whether packages-lock.json existed.
     /// </summary>
-    public static Task BackupAsync(string projectPath, CancellationToken ct = default)
+    public static async Task BackupAsync(string projectPath, CancellationToken ct = default)
     {
         var manifestPath = GetManifestPath(projectPath);
         var backupDir    = GetBackupDir(projectPath);
-        var backupPath   = Path.Combine(backupDir, "manifest.json");
+        var backupPath   = Path.Combine(backupDir, ManifestFileName);
 
         if (!File.Exists(manifestPath))
             throw new FileNotFoundException($"manifest.json not found: {manifestPath}");
@@ -51,58 +54,46 @@ public static class UnityManifestManager
         // An existing backup is the original pre-injection manifest. Never overwrite it
         // with an already modified manifest when Connect is invoked repeatedly.
         if (File.Exists(backupPath))
-            return Task.CompletedTask;
+            return;
 
         Directory.CreateDirectory(backupDir);
-        File.Copy(manifestPath, backupPath, true);
+        await CopyAsync(manifestPath, backupPath, ct);
 
-        // Write .gitignore to prevent backup from being committed
+        var lockPath       = GetLockPath(projectPath);
+        var backupLockPath = Path.Combine(backupDir, LockFileName);
+        var missingMarker  = Path.Combine(backupDir, MissingLockFileName);
+        if (File.Exists(lockPath))
+            await CopyAsync(lockPath, backupLockPath, ct);
+        else
+            await File.WriteAllTextAsync(missingMarker, string.Empty, new System.Text.UTF8Encoding(false), ct);
+
         var gitignorePath = Path.Combine(backupDir, ".gitignore");
-        File.WriteAllText(gitignorePath, "*\n");
-
-        return Task.CompletedTask;
+        await File.WriteAllTextAsync(gitignorePath, "*\n", new System.Text.UTF8Encoding(false), ct);
     }
 
     /// <summary>
-    /// Inject the local Bridge package dependency into manifest.json.
-    /// CRITICAL: We must WRITE NEW CONTENT to trigger Unity's FileSystemWatcher.
-    /// Touching timestamps or deleting packages-lock.json does NOT reliably
-    /// trigger Unity's Package Manager re-resolution.
+    /// Injects local Bridge and Coplay dependencies into manifest.json.
     /// </summary>
-    public static async Task InjectBridgeDependencyAsync(
+    public static async Task InjectDependenciesAsync(
         string projectPath,
         string bridgePackagePath,
+        string coplayPackagePath,
         CancellationToken ct = default)
     {
         var manifestPath = GetManifestPath(projectPath);
         if (!File.Exists(manifestPath))
             throw new FileNotFoundException($"manifest.json not found: {manifestPath}");
 
-        // The wrapper package contains only connection bootstrap code and depends on Coplay.
-        var normalizedPath = bridgePackagePath.Replace("\\", "/");
-        if (!normalizedPath.StartsWith("file:"))
-            normalizedPath = "file:" + normalizedPath;
-
-        // Read current manifest
-        var json = await File.ReadAllTextAsync(manifestPath, ct);
+        var json = await File.ReadAllTextAsync(manifestPath, System.Text.Encoding.UTF8, ct);
         var doc  = JsonNode.Parse(json) ?? new JsonObject();
         var deps = doc["dependencies"] as JsonObject ?? new JsonObject();
 
-        // Add/update the bridge dependency
-        deps[BridgePackageName] = normalizedPath;
-        doc["dependencies"]     = deps;
+        deps[CoplayPackageName] = ToFileDependency(coplayPackagePath);
+        deps[BridgePackageName] = ToFileDependency(bridgePackagePath);
+        doc["dependencies"]    = deps;
 
-        // Serialize to new JSON string
         var newContent = JsonSerializer.Serialize(doc, JsonOptions);
-
-        // CRITICAL: Write new content to trigger Unity's FileSystemWatcher.
-        // This MUST be a genuine content change — Unity watches for Changed events,
-        // not just timestamp modifications.
-        await File.WriteAllTextAsync(manifestPath, newContent, new System.Text.UTF8Encoding(false), ct);
-
-        // Small delay to ensure Unity's FSW has time to observe the change
-        try { await Task.Delay(200, ct); }
-        catch (OperationCanceledException) { /* ignore */ }
+        await WriteAtomicallyAsync(manifestPath, newContent, ct);
     }
 
     /// <summary>
@@ -112,25 +103,23 @@ public static class UnityManifestManager
     {
         var manifestPath = GetManifestPath(projectPath);
         var backupDir    = GetBackupDir(projectPath);
-        var backupPath   = Path.Combine(backupDir, "manifest.json");
+        var backupPath   = Path.Combine(backupDir, ManifestFileName);
 
         if (!File.Exists(backupPath))
             return false;
 
-        // Restore manifest by writing the backed-up content
         var backupContent = await File.ReadAllTextAsync(backupPath, System.Text.Encoding.UTF8, ct);
-        await File.WriteAllTextAsync(manifestPath, backupContent, new System.Text.UTF8Encoding(false), ct);
+        await WriteAtomicallyAsync(manifestPath, backupContent, ct);
 
-        // Clean up backup directory
-        try
-        {
-            if (Directory.Exists(backupDir))
-                Directory.Delete(backupDir, true);
-        }
-        catch
-        {
-            // Deletion failure does not affect the main result
-        }
+        var lockPath       = GetLockPath(projectPath);
+        var backupLockPath = Path.Combine(backupDir, LockFileName);
+        var missingMarker  = Path.Combine(backupDir, MissingLockFileName);
+        if (File.Exists(backupLockPath))
+            await CopyAsync(backupLockPath, lockPath, ct);
+        else if (File.Exists(missingMarker) && File.Exists(lockPath))
+            File.Delete(lockPath);
+
+        Directory.Delete(backupDir, recursive: true);
 
         return true;
     }
@@ -145,9 +134,10 @@ public static class UnityManifestManager
 
         try
         {
-            var json = await File.ReadAllTextAsync(manifestPath, ct);
+            var json = await File.ReadAllTextAsync(manifestPath, System.Text.Encoding.UTF8, ct);
             var doc  = JsonNode.Parse(json);
-            return doc?["dependencies"]?[BridgePackageName] != null;
+            return doc?["dependencies"]?[BridgePackageName] != null
+                   || doc?["dependencies"]?[CoplayPackageName] != null;
         }
         catch
         {
@@ -159,5 +149,22 @@ public static class UnityManifestManager
     /// Check whether a backup exists (used to determine if restore is needed).
     /// </summary>
     public static bool HasBackup(string projectPath)
-        => File.Exists(Path.Combine(GetBackupDir(projectPath), "manifest.json"));
+        => File.Exists(Path.Combine(GetBackupDir(projectPath), ManifestFileName));
+
+    private static string ToFileDependency(string packagePath)
+        => "file:" + Path.GetFullPath(packagePath).Replace("\\", "/");
+
+    private static async Task CopyAsync(string sourcePath, string destinationPath, CancellationToken ct)
+    {
+        await using var source      = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        await using var destination = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None);
+        await source.CopyToAsync(destination, ct);
+    }
+
+    private static async Task WriteAtomicallyAsync(string path, string content, CancellationToken ct)
+    {
+        var temporaryPath = path + ".tristin.tmp";
+        await File.WriteAllTextAsync(temporaryPath, content, new System.Text.UTF8Encoding(false), ct);
+        File.Move(temporaryPath, path, overwrite: true);
+    }
 }

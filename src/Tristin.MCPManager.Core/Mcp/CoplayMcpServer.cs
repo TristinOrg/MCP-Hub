@@ -1,12 +1,10 @@
 using System.Diagnostics;
-using Tristin.MCPManager.Core.Interfaces;
-
 namespace Tristin.MCPManager.Core.Mcp;
 
 /// <summary>
 /// Starts and monitors the official Coplay MCP for Unity server through uvx.
 /// </summary>
-public sealed class CoplayMcpServer : IManagedMcpServer, IAsyncDisposable
+public sealed class CoplayMcpServer : IAsyncDisposable
 {
     public const string PackageVersion = "10.1.0";
 

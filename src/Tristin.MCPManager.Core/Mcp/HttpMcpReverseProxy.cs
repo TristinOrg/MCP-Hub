@@ -1,12 +1,10 @@
 using System.Net;
-using Tristin.MCPManager.Core.Interfaces;
-
 namespace Tristin.MCPManager.Core.Mcp;
 
 /// <summary>
 /// Transparently forwards MCP HTTP traffic to the official Coplay server.
 /// </summary>
-public sealed class HttpMcpReverseProxy : IMcpServerProxy, IAsyncDisposable
+public sealed class HttpMcpReverseProxy : IAsyncDisposable
 {
     private static readonly HashSet<string> HopByHopHeaders = new(StringComparer.OrdinalIgnoreCase)
     {

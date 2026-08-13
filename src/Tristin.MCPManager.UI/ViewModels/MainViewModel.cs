@@ -22,11 +22,12 @@ public partial class MainViewModel : ViewModelBase
 {
     private static readonly Uri CoplayEndpoint = new("http://127.0.0.1:8080/");
 
-    private readonly IEditorDetector      _detector;
-    private readonly IBridgeInjector      _injector;
-    private readonly CoplayMcpServer      _coplayServer;
-    private readonly CoplayMcpClient      _coplayClient;
-    private readonly HttpMcpReverseProxy  _mcpProxy;
+    private readonly IEditorDetector       _detector;
+    private readonly UnityBridgeInjector   _injector;
+    private readonly CoplayPackageCache    _packageCache;
+    private readonly CoplayMcpServer       _coplayServer;
+    private readonly CoplayMcpClient       _coplayClient;
+    private readonly HttpMcpReverseProxy   _mcpProxy;
     private readonly CancellationTokenSource _cts = new();
     private int _shutdownStarted;
 
@@ -69,7 +70,11 @@ public partial class MainViewModel : ViewModelBase
         var packagePath = LocateBridgePackage();
 
         _detector     = new UnityProcessDetector();
-        _injector     = new UnityBridgeInjector { BridgePackagePath = packagePath };
+        _packageCache = new CoplayPackageCache();
+        _injector     = new UnityBridgeInjector(_packageCache, new InjectionRecoveryStore())
+        {
+            BridgePackagePath = packagePath
+        };
         _coplayServer = new CoplayMcpServer(CoplayEndpoint, line => AppendLog($"[Coplay] {line}"));
         _coplayClient = new CoplayMcpClient(CoplayEndpoint);
         _mcpProxy     = new HttpMcpReverseProxy();
@@ -83,6 +88,9 @@ public partial class MainViewModel : ViewModelBase
     {
         try
         {
+            foreach (var projectPath in await _injector.RecoverPendingAsync(_cts.Token))
+                AppendLog($"[Recovery] Restored package state after an unclean shutdown: {projectPath}");
+
             AppendLog("[Info] Starting official Coplay MCP server ...");
             await _coplayServer.StartAsync(_cts.Token);
             await _mcpProxy.StartAsync(new Uri("http://127.0.0.1:9000/"), CoplayEndpoint, _cts.Token);
@@ -306,6 +314,7 @@ public partial class MainViewModel : ViewModelBase
         }
 
         _coplayClient.Dispose();
+        _packageCache.Dispose();
         await _mcpProxy.DisposeAsync();
         await _coplayServer.DisposeAsync();
         _cts.Dispose();

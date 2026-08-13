@@ -1,9 +1,3 @@
-// Injects a thin bootstrap package that loads and connects the official Coplay package.
-//
-// Author: Tristin Wen
-// Email:  Tristin_Wen@outlook.com
-
-using Tristin.MCPManager.Core.Interfaces;
 using Tristin.MCPManager.Core.Models;
 
 namespace Tristin.MCPManager.Unity;
@@ -11,9 +5,16 @@ namespace Tristin.MCPManager.Unity;
 /// <summary>
 /// Injects the Coplay bootstrap package through Packages/manifest.json.
 /// </summary>
-public class UnityBridgeInjector : IBridgeInjector
+public sealed class UnityBridgeInjector
 {
-    public string EditorType => "Unity";
+    private readonly CoplayPackageCache    _packageCache;
+    private readonly InjectionRecoveryStore _recoveryStore;
+
+    public UnityBridgeInjector(CoplayPackageCache packageCache, InjectionRecoveryStore recoveryStore)
+    {
+        _packageCache  = packageCache;
+        _recoveryStore = recoveryStore;
+    }
 
     /// <summary>
     /// Local path to the bootstrap package directory.
@@ -36,21 +37,32 @@ public class UnityBridgeInjector : IBridgeInjector
 
         try
         {
-            progress?.Report((10, "Backup Packages/manifest.json ..."));
-            await UnityManifestManager.BackupAsync(instance.ProjectPath, ct);
+            var coplayPackagePath = await _packageCache.PrepareAsync(progress, ct);
 
-            progress?.Report((50, "Inject Coplay MCP package ..."));
-            await UnityManifestManager.InjectBridgeDependencyAsync(
-                instance.ProjectPath, BridgePackagePath, ct);
+            progress?.Report((40, "Backing up Unity package state ..."));
+            await UnityManifestManager.BackupAsync(instance.ProjectPath, ct);
+            await _recoveryStore.RegisterAsync(instance.ProjectPath, ct);
+
+            progress?.Report((60, "Injecting cached Coplay packages ..."));
+            await UnityManifestManager.InjectDependenciesAsync(
+                instance.ProjectPath,
+                BridgePackagePath,
+                coplayPackagePath,
+                ct);
 
             UnityWindowActivator.ActivateUnityWindow(instance.ProcessId);
-            progress?.Report((100, "Coplay package injected. Waiting for Unity package reload ..."));
+            progress?.Report((100, "Cached Coplay package injected. Waiting for Unity package reload ..."));
             return true;
         }
         catch (Exception ex)
         {
             instance.ErrorMessage = $"Inject failed: {ex.Message}";
-            try { await UnityManifestManager.RestoreAsync(instance.ProjectPath, ct); } catch { /* ignore */ }
+            try
+            {
+                if (await UnityManifestManager.RestoreAsync(instance.ProjectPath, CancellationToken.None))
+                    await _recoveryStore.CompleteAsync(instance.ProjectPath, CancellationToken.None);
+            }
+            catch { }
             return false;
         }
     }
@@ -63,7 +75,10 @@ public class UnityBridgeInjector : IBridgeInjector
             if (!UnityManifestManager.HasBackup(instance.ProjectPath))
                 return !await UnityManifestManager.IsBridgeInjectedAsync(instance.ProjectPath, ct);
 
-            return await UnityManifestManager.RestoreAsync(instance.ProjectPath, ct);
+            var restored = await UnityManifestManager.RestoreAsync(instance.ProjectPath, ct);
+            if (restored)
+                await _recoveryStore.CompleteAsync(instance.ProjectPath, ct);
+            return restored;
         }
         catch (Exception ex)
         {
@@ -76,5 +91,28 @@ public class UnityBridgeInjector : IBridgeInjector
     {
         if (instance.EditorType != "Unity") return Task.FromResult(false);
         return UnityManifestManager.IsBridgeInjectedAsync(instance.ProjectPath, ct);
+    }
+
+    /// <summary>
+    /// Restores projects left mutated by an unclean Hub shutdown.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> RecoverPendingAsync(CancellationToken ct = default)
+    {
+        List<string> restored = [];
+        foreach (var projectPath in await _recoveryStore.ListAsync(ct))
+        {
+            if (!UnityManifestManager.HasBackup(projectPath))
+            {
+                await _recoveryStore.CompleteAsync(projectPath, ct);
+                continue;
+            }
+
+            if (await UnityManifestManager.RestoreAsync(projectPath, ct))
+            {
+                await _recoveryStore.CompleteAsync(projectPath, ct);
+                restored.Add(projectPath);
+            }
+        }
+        return restored;
     }
 }
