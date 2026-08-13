@@ -23,7 +23,10 @@ namespace Tristin.MCPBridge
             ["unity.list_scenes"]       = _ => HandleListScenes(),
             ["unity.create_gameobject"] = HandleCreateGameObject,
             ["unity.save_project"]      = _ => HandleSaveProject(),
-            ["unity.refresh_assets"]    = _ => HandleRefreshAssets()
+            ["unity.refresh_assets"]    = _ => HandleRefreshAssets(),
+            ["unity.create_prefab"]     = HandleCreatePrefab,
+            ["unity.create_text"]       = HandleCreateText,
+            ["unity.create_script"]     = HandleCreateScript
         };
 
         /// <summary>
@@ -128,6 +131,79 @@ namespace Tristin.MCPBridge
             AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
             return "\"ok\"";
         }
+
+        private static string HandleCreatePrefab(string argsJson)
+        {
+            // Args: {"path":"Assets/Prefabs/Test.prefab","children":[{"name":"UI","components":["RectTransform"]},{"name":"Text","components":["TextMeshPro","RectTransform"]}]}
+            string path = "Assets/Prefabs/NewPrefab.prefab";
+            var pathMatch = System.Text.RegularExpressions.Regex.Match(argsJson, "\"path\"\\s*:\\s*\"(?<p>[^\"]+)\"");
+            if (pathMatch.Success) path = pathMatch.Groups["p"].Value;
+
+            var root = new GameObject("Root");
+            root.transform.localPosition = Vector3.zero;
+
+            // Create children if specified
+            var childrenMatch = System.Text.RegularExpressions.Regex.Match(argsJson, "\"children\"\\s*:\\s*\\[(?<c>.*?)\\]\\s*\\}", System.Text.RegularExpressions.RegexOptions.Singleline);
+            if (childrenMatch.Success)
+            {
+                var childrenJson = childrenMatch.Groups["c"].Value;
+                // Simple child parsing: find each {"name":"...","components":[...]} block
+                var childMatches = System.Text.RegularExpressions.Regex.Matches(
+                    childrenJson,
+                    "\\{\\s*\"name\"\\s*:\\s*\"(?<name>[^\"]+)\"(?:\\s*,\\s*\"components\"\\s*:\\s*\\[(?<comps>.*?)\\])?\\s*\\}",
+                    System.Text.RegularExpressions.RegexOptions.Singleline);
+
+                foreach (System.Text.RegularExpressions.Match cm in childMatches)
+                {
+                    var childName = cm.Groups["name"].Value;
+                    var child = new GameObject(childName);
+                    child.transform.SetParent(root.transform, false);
+                }
+            }
+
+            // Ensure directory exists
+            var dir = System.IO.Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir))
+                System.IO.Directory.CreateDirectory(dir!);
+
+            // Save as prefab
+            var prefab = UnityEditor.PrefabUtility.SaveAsPrefabAsset(root, path);
+            UnityEngine.Object.DestroyImmediate(root);
+
+            if (prefab != null)
+                return $"{{\"path\":\"{Escape(path)}\",\"instanceId\":{prefab.GetInstanceID()}}}";
+
+            throw new Exception($"Failed to create prefab at {path}");
+        }
+
+        private static string HandleCreateText(string argsJson)
+        {
+            // Args: {"path":"Assets/Scripts/Test.cs","content":"public class Test {}"}
+            string path = "Assets/Scripts/NewScript.cs";
+            string content = "// Empty script";
+
+            var pathMatch = System.Text.RegularExpressions.Regex.Match(argsJson, "\"path\"\\s*:\\s*\"(?<p>[^\"]+)\"");
+            if (pathMatch.Success) path = pathMatch.Groups["p"].Value;
+
+            var contentMatch = System.Text.RegularExpressions.Regex.Match(argsJson, "\"content\"\\s*:\\s*\"(?<c>.*?)\"\\s*\\}", System.Text.RegularExpressions.RegexOptions.Singleline);
+            if (contentMatch.Success)
+            {
+                content = contentMatch.Groups["c"].Value;
+                // Unescape
+                content = content.Replace("\\n", "\n").Replace("\\t", "\t").Replace("\\\"", "\"").Replace("\\\\", "\\");
+            }
+
+            var dir = System.IO.Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir))
+                System.IO.Directory.CreateDirectory(dir!);
+
+            System.IO.File.WriteAllText(path, content);
+            AssetDatabase.Refresh();
+
+            return $"{{\"path\":\"{Escape(path)}\"}}";
+        }
+
+        private static string HandleCreateScript(string argsJson) => HandleCreateText(argsJson);
 
         private static string Escape(string s)
         {

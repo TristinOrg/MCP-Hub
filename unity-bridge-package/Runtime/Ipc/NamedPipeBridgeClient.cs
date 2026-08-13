@@ -1,18 +1,17 @@
 // NamedPipe IPC client: Unity Bridge -> Runtime Manager.
+// Minimal implementation using only Unity-compatible APIs (no Channels, no Pipelines).
 // Protocol (JSON-lines over NamedPipe):
-//   1. Send one register JSON line on connect
-//   2. Then each line is a request or response:
-//        REQ: {"id":1,"type":"tool","name":"unity.create_gameobject","args":"{...}"}
-//        RSP: {"id":1,"ok":true,"result":"..."} or {"id":1,"ok":false,"error":"..."}
+//   1. Send register JSON line on connect
+//   2. Each subsequent line is a request or response
 //   3. Heartbeat: PING -> PONG
 
 #if UNITY_EDITOR
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.IO.Pipes;
 using System.Text;
 using System.Threading;
-using System.Threading.Channels;
 using System.Threading.Tasks;
 using UnityEngine;
 
@@ -20,6 +19,7 @@ namespace Tristin.MCPBridge
 {
     /// <summary>
     /// NamedPipe client connecting the Unity Bridge to the Runtime Manager.
+    /// Uses simple StreamReader/StreamWriter for maximum Unity compatibility.
     /// </summary>
     public static class NamedPipeBridgeClient
     {
@@ -32,8 +32,8 @@ namespace Tristin.MCPBridge
             int                             pid,
             Func<string, string, string>    onCommand)
         {
-            CancellationTokenSource cts = new();
-            _ = Task.Run(() => RunLoopAsync(endpoint, projectName, projectPath, pid, onCommand, cts.Token), cts.Token);
+            var cts = new CancellationTokenSource();
+            Task.Run(() => RunLoopAsync(endpoint, projectName, projectPath, pid, onCommand, cts.Token), cts.Token);
             return new DisposableAction(() =>
             {
                 try { cts.Cancel(); } catch { /* ignore */ }
@@ -48,61 +48,65 @@ namespace Tristin.MCPBridge
             Func<string, string, string>    onCommand,
             CancellationToken               ct)
         {
-            Channel<string> sendChannel = Channel.CreateUnbounded<string>();
+            // Thread-safe queue for outgoing messages (replaces Channel)
+            var sendQueue = new ConcurrentQueue<string>();
+            var sendSignal = new AutoResetEvent(false);
 
             while (!ct.IsCancellationRequested)
             {
                 try
                 {
-                    // Connect to Runtime Manager's NamedPipe server
                     using var pipe = new NamedPipeClientStream(
                         serverName: ".",
                         pipeName:   ServerPipeName,
                         direction:  PipeDirection.InOut,
                         options:    PipeOptions.Asynchronous);
 
-                    await pipe.ConnectAsync(2000, ct);
-                    pipe.ReadMode = PipeStreamMode.Byte;
+                    await pipe.ConnectAsync(3000, ct);
 
-                    using StreamReader  reader = new(pipe, new UTF8Encoding(false));
-                    using StreamWriter  writer = new(pipe, new UTF8Encoding(false)) { NewLine = "\n", AutoFlush = true };
+                    using var reader = new StreamReader(pipe, Encoding.UTF8);
+                    using var writer = new StreamWriter(pipe, Encoding.UTF8) { NewLine = "\n", AutoFlush = true };
 
                     // 1) Send registration
-                    var registerJson = JsonUtility.ToJson(new BridgeRegistrationMsg
-                    {
-                        type        = "register",
-                        editorType  = "Unity",
-                        projectName = projectName,
-                        projectPath = projectPath,
-                        pid         = pid,
-                        endpoint    = endpoint
-                    });
-                    await writer.WriteLineAsync(registerJson);
-                    await writer.FlushAsync();
+                    var registerJson = $"{{\"type\":\"register\",\"editorType\":\"Unity\",\"projectName\":\"{Escape(projectName)}\",\"projectPath\":\"{Escape(projectPath)}\",\"pid\":{pid},\"endpoint\":\"{Escape(endpoint)}\"}}";
+                    writer.WriteLine(registerJson);
+                    writer.Flush();
+                    Debug.Log($"[MCPBridge] Sent registration: {projectName} PID={pid}");
 
-                    // 2) Start send loop
-                    var sendTask = Task.Run(async () =>
-                    {
-                        await foreach (var line in sendChannel.Reader.ReadAllAsync(ct))
-                        {
-                            await writer.WriteLineAsync(line);
-                            await writer.FlushAsync();
-                        }
-                    }, ct);
-
-                    // 3) Start heartbeat
+                    // 2) Start heartbeat + send loop on separate tasks
                     var hbTask = Task.Run(async () =>
                     {
                         while (!ct.IsCancellationRequested)
                         {
                             try { await Task.Delay(5000, ct); } catch (OperationCanceledException) { break; }
-                            try { await sendChannel.Writer.WriteAsync("{\"type\":\"ping\"}", ct); }
-                            catch (ChannelClosedException) { break; }
-                            catch (OperationCanceledException) { break; }
+                            sendQueue.Enqueue("{\"type\":\"ping\"}");
+                            sendSignal.Set();
                         }
                     }, ct);
 
-                    // 4) Receive loop
+                    var sendTask = Task.Run(async () =>
+                    {
+                        while (!ct.IsCancellationRequested)
+                        {
+                            try
+                            {
+                                sendSignal.WaitOne(500);
+                                while (sendQueue.TryDequeue(out var msg))
+                                {
+                                    writer.WriteLine(msg);
+                                    writer.Flush();
+                                }
+                            }
+                            catch (OperationCanceledException) { break; }
+                            catch (Exception ex)
+                            {
+                                Debug.LogWarning($"[MCPBridge] Send error: {ex.Message}");
+                                break;
+                            }
+                        }
+                    }, ct);
+
+                    // 3) Receive loop
                     string? line;
                     while ((line = await reader.ReadLineAsync()) != null)
                     {
@@ -110,38 +114,42 @@ namespace Tristin.MCPBridge
 
                         try
                         {
-                            // MVP: simple string parsing to avoid Newtonsoft dependency
-                            if (line.Contains("\"type\":\"ping\"") || line.Contains("\"type\":\"pong\""))
+                            // ping/pong
+                            if (line.Contains("\"type\":\"ping\""))
                             {
-                                if (line.Contains("\"type\":\"ping\""))
-                                    await sendChannel.Writer.WriteAsync("{\"type\":\"pong\"}", ct);
+                                sendQueue.Enqueue("{\"type\":\"pong\"}");
+                                sendSignal.Set();
                                 continue;
                             }
 
-                            var toolMatch = System.Text.RegularExpressions.Regex.Match(
-                                line,
-                                "\"id\"\\s*:\\s*(?<id>\\d+).*?\"name\"\\s*:\\s*\"(?<name>[^\"]+)\".*?\"args\"\\s*:\\s*\"(?<args>.*?)\"\\s*\\}");
+                            if (line.Contains("\"type\":\"pong\""))
+                                continue;
 
-                            if (toolMatch.Success)
+                            // tool call: {"id":N,"type":"tool","name":"...","args":"..."}
+                            var idMatch = System.Text.RegularExpressions.Regex.Match(line, "\"id\"\\s*:\\s*(?<id>\\d+)");
+                            var nameMatch = System.Text.RegularExpressions.Regex.Match(line, "\"name\"\\s*:\\s*\"(?<name>[^\"]+)\"");
+                            var argsMatch = System.Text.RegularExpressions.Regex.Match(line, "\"args\"\\s*:\\s*\"(?<args>.*?)\"\\s*\\}");
+
+                            if (idMatch.Success && nameMatch.Success)
                             {
-                                var id   = toolMatch.Groups["id"].Value;
-                                var name = toolMatch.Groups["name"].Value;
-                                var args = toolMatch.Groups["args"].Value;
-                                // Unescape args
+                                var id = idMatch.Groups["id"].Value;
+                                var name = nameMatch.Groups["name"].Value;
+                                var args = argsMatch.Success ? argsMatch.Groups["args"].Value : "{}";
                                 args = args.Replace("\\\"", "\"").Replace("\\\\", "\\");
 
                                 string result;
                                 try
                                 {
                                     var cmdResult = onCommand(name, args);
-                                    result = $"{{\"id\":{id},\"ok\":true,\"result\":{EscapeJson(cmdResult)}}}";
+                                    result = $"{{\"id\":{id},\"ok\":true,\"result\":\"{Escape(cmdResult)}\"}}";
                                 }
                                 catch (Exception ex)
                                 {
-                                    result = $"{{\"id\":{id},\"ok\":false,\"error\":\"{EscapeJson(ex.Message)}\"}}";
+                                    result = $"{{\"id\":{id},\"ok\":false,\"error\":\"{Escape(ex.Message)}\"}}";
                                 }
 
-                                await sendChannel.Writer.WriteAsync(result, ct);
+                                sendQueue.Enqueue(result);
+                                sendSignal.Set();
                             }
                         }
                         catch (Exception ex)
@@ -150,7 +158,8 @@ namespace Tristin.MCPBridge
                         }
                     }
 
-                    try { sendChannel.Writer.Complete(); } catch { /* ignore */ }
+                    // Connection closed
+                    Debug.LogWarning("[MCPBridge] NamedPipe connection closed, retrying ...");
                 }
                 catch (OperationCanceledException)
                 {
@@ -158,7 +167,7 @@ namespace Tristin.MCPBridge
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogWarning($"[MCPBridge] IPC disconnected, retry in 1s: {ex.Message}");
+                    Debug.LogWarning($"[MCPBridge] IPC error: {ex.Message}");
                 }
 
                 // Reconnect delay
@@ -166,10 +175,10 @@ namespace Tristin.MCPBridge
             }
         }
 
-        private static string EscapeJson(string s)
+        private static string Escape(string s)
         {
             if (string.IsNullOrEmpty(s)) return string.Empty;
-            StringBuilder sb = new(s.Length);
+            var sb = new StringBuilder(s.Length);
             foreach (var c in s)
             {
                 switch (c)
@@ -179,24 +188,10 @@ namespace Tristin.MCPBridge
                     case '\n': sb.Append("\\n");  break;
                     case '\r': sb.Append("\\r");  break;
                     case '\t': sb.Append("\\t");  break;
-                    default:
-                        if (c < ' ') sb.AppendFormat("\\u{0:x4}", (int)c);
-                        else sb.Append(c);
-                        break;
+                    default:   sb.Append(c);     break;
                 }
             }
             return sb.ToString();
-        }
-
-        [Serializable]
-        private class BridgeRegistrationMsg
-        {
-            public string type        = null!;
-            public string editorType  = null!;
-            public string projectName = null!;
-            public string projectPath = null!;
-            public int    pid;
-            public string endpoint    = null!;
         }
 
         private class DisposableAction : IDisposable

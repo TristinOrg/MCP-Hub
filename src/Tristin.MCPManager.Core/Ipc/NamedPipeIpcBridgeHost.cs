@@ -102,7 +102,7 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
 
     public Task<IReadOnlyList<McpToolDefinition>> ListToolsAsync(int targetPid, CancellationToken cancellationToken = default)
     {
-        // MVP: predefined tool list
+        // Predefined tool list — Bridge reports what it supports via its handlers
         IReadOnlyList<McpToolDefinition> list = new List<McpToolDefinition>
         {
             new() { Name = "ping", Description = "Ping the bridge", InputSchema = new {}, SourceEditorPid = targetPid },
@@ -118,6 +118,36 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
                     properties = new
                     {
                         name = new { type = "string", description = "GameObject name" }
+                    }
+                },
+                SourceEditorPid = targetPid
+            },
+            new()
+            {
+                Name        = "unity.create_prefab",
+                Description = "Create a prefab asset with optional child GameObjects and save to the project",
+                InputSchema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        path = new { type = "string", description = "Asset path e.g. Assets/Prefabs/Test.prefab" },
+                        children = new { type = "array", description = "Optional child GameObjects to create under root" }
+                    }
+                },
+                SourceEditorPid = targetPid
+            },
+            new()
+            {
+                Name        = "unity.create_text",
+                Description = "Create a text file in the project (script, json, yaml, etc.)",
+                InputSchema = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        path    = new { type = "string", description = "Asset path e.g. Assets/Scripts/Test.cs" },
+                        content = new { type = "string", description = "File content" }
                     }
                 },
                 SourceEditorPid = targetPid
@@ -175,7 +205,7 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
                 bridgeConn = new BridgeConnection(writer);
 
                 string? line;
-                while ((line = await reader.ReadLineAsync(ct)) != null)
+                while ((line = await reader.ReadLineAsync()) != null)
                 {
                     if (string.IsNullOrWhiteSpace(line)) continue;
 
@@ -222,8 +252,8 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
                 var pidMatch         = Regex.Match(line, "\"pid\"\\s*:\\s*(?<pid>\\d+)");
                 var editorTypeMatch  = Regex.Match(line, "\"editorType\"\\s*:\\s*\"(?<v>[^\"]+)\"");
                 var projectNameMatch = Regex.Match(line, "\"projectName\"\\s*:\\s*\"(?<v>[^\"]+)\"");
-                var projectPathMatch = Regex.Match(line, "\"projectPath\"\\s*:\\s*\"(?<v>[^\"]+)\"");
-                var endpointMatch    = Regex.Match(line, "\"endpoint\"\\s*:\\s*\"(?<v>[^\"]+)\"");
+                var projectPathMatch = Regex.Match(line, "\"projectPath\"\\s*:\\s*\"(?<v>(?:[^\"\\\\]|\\\\.)*)\"");
+                var endpointMatch    = Regex.Match(line, "\"endpoint\"\\s*:\\s*\"(?<v>(?:[^\"\\\\]|\\\\.)*)\"");
 
                 if (pidMatch.Success)
                 {
