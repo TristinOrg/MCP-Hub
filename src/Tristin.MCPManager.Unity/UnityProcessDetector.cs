@@ -1,9 +1,3 @@
-// ============================================================
-// Author:  Tristin Wen
-// Email:   Tristin_Wen@outlook.com
-// File:    UnityProcessDetector.cs
-// ============================================================
-
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Tristin.MCPManager.Core.Interfaces;
@@ -12,8 +6,8 @@ using Tristin.MCPManager.Core.Models;
 namespace Tristin.MCPManager.Unity;
 
 /// <summary>
-/// Unity Editor 进程检测器
-/// 通过扫描名为 "Unity" 的进程并解析其命令行参数（-projectPath）来获取项目信息
+/// Detects running Unity Editor processes by scanning process list
+/// and parsing command-line arguments (-projectPath).
 /// </summary>
 public class UnityProcessDetector : IEditorDetector
 {
@@ -23,7 +17,7 @@ public class UnityProcessDetector : IEditorDetector
 
     public async Task<IReadOnlyList<EditorInstance>> DetectAsync(CancellationToken cancellationToken = default)
     {
-        var result = new List<EditorInstance>();
+        List<EditorInstance> result = new();
         var processes = Process.GetProcessesByName("Unity");
 
         foreach (var process in processes)
@@ -36,7 +30,7 @@ public class UnityProcessDetector : IEditorDetector
             }
             catch
             {
-                // 进程可能已经退出，忽略
+                // Process may have exited — skip
             }
         }
 
@@ -48,13 +42,13 @@ public class UnityProcessDetector : IEditorDetector
         Func<IReadOnlyList<EditorInstance>, Task>           onChanged,
         CancellationToken                                   cancellationToken = default)
     {
-        var previousSet = new HashSet<int>();
+        HashSet<int> previousSet = new();
 
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
-                var instances = await DetectAsync(cancellationToken);
+                var instances  = await DetectAsync(cancellationToken);
                 var currentSet = new HashSet<int>(instances.Select(i => i.ProcessId));
 
                 if (!currentSet.SetEquals(previousSet))
@@ -69,7 +63,7 @@ public class UnityProcessDetector : IEditorDetector
             }
             catch
             {
-                // 忽略检测中的临时错误
+                // Ignore transient detection errors
             }
 
             try
@@ -84,15 +78,15 @@ public class UnityProcessDetector : IEditorDetector
     }
 
     /// <summary>
-    /// 解析 Unity 进程，提取项目路径、版本等信息
+    /// Parse a Unity process to extract project path, version, etc.
     /// </summary>
     private static async Task<EditorInstance?> ParseProcessAsync(Process process, CancellationToken ct)
     {
-        // 1. 从进程主模块获取可执行文件路径和版本
-        string? exePath      = null;
-        string? version      = "Unknown";
-        string? projectPath  = null;
-        string? projectName  = null;
+        // 1. Get executable path and version from the main module
+        string? exePath     = null;
+        string? version     = "Unknown";
+        string? projectPath = null;
+        string? projectName = null;
 
         try
         {
@@ -105,19 +99,17 @@ public class UnityProcessDetector : IEditorDetector
         }
         catch
         {
-            // 无权限访问主模块时跳过
+            // No permission to access main module — skip
         }
 
-        // 2. 尝试通过 WMI 读取命令行（Windows）获取 -projectPath
+        // 2. Try WMI (Windows) to read command line for -projectPath
         projectPath = await GetProjectPathFromCommandLineAsync(process.Id, ct);
 
-        // 3. 如果 WMI 失败，尝试通过 Editor.log 路径推断
+        // 3. Fallback: infer from Editor.log
         if (string.IsNullOrEmpty(projectPath))
-        {
             projectPath = TryGetProjectPathFromLog(process.Id);
-        }
 
-        // 4. 还是没有，则标记为未知
+        // 4. Still nothing — mark as unknown
         if (string.IsNullOrEmpty(projectPath))
         {
             projectName = $"Unity_{process.Id}";
@@ -141,7 +133,7 @@ public class UnityProcessDetector : IEditorDetector
     }
 
     /// <summary>
-    /// 通过 WMI（Windows）读取进程命令行参数提取 -projectPath
+    /// Read process command line via WMI (Windows) to extract -projectPath.
     /// </summary>
     private static async Task<string?> GetProjectPathFromCommandLineAsync(int pid, CancellationToken ct)
     {
@@ -150,7 +142,7 @@ public class UnityProcessDetector : IEditorDetector
 
         try
         {
-            var startInfo = new ProcessStartInfo
+            ProcessStartInfo startInfo = new()
             {
                 FileName               = "wmic.exe",
                 Arguments              = $"process where ProcessId={pid} get CommandLine /value",
@@ -165,7 +157,7 @@ public class UnityProcessDetector : IEditorDetector
             var output = await proc.StandardOutput.ReadToEndAsync(ct);
             await proc.WaitForExitAsync(ct);
 
-            // 匹配 -projectPath "xxx" 或 -projectPath xxx
+            // Match -projectPath "xxx" or -projectPath xxx
             var match = Regex.Match(
                 output,
                 @"-projectPath\s+[""']?(?<path>[^""'\r\n]+)[""']?",
@@ -180,14 +172,14 @@ public class UnityProcessDetector : IEditorDetector
         }
         catch
         {
-            // WMI 失败就放弃
+            // WMI failed — give up
         }
 
         return null;
     }
 
     /// <summary>
-    /// 备选方案：通过 Unity Editor.log 定位项目路径
+    /// Fallback: locate project path from Unity Editor.log.
     /// Windows: %LOCALAPPDATA%\Unity\Editor\Editor.log
     /// </summary>
     private static string? TryGetProjectPathFromLog(int pid)
@@ -200,13 +192,12 @@ public class UnityProcessDetector : IEditorDetector
 
             if (!File.Exists(logPath)) return null;
 
-            // 尝试读取文件（Unity 可能正在占用，用只读共享模式）
-            using var fs = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            using var sr = new StreamReader(fs);
+            // Read with read-only sharing (Unity may hold the file)
+            using FileStream fs = new(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using StreamReader sr = new(fs);
 
-            // 从末尾向前找 "Initialize engine version" 后面的 "Project file" 行
-            // 简单策略：倒序读最近的 100 行
-            var lines = new List<string>();
+            // Read last 500 lines
+            List<string> lines = new();
             string? line;
             while ((line = sr.ReadLine()) != null)
             {
@@ -214,14 +205,10 @@ public class UnityProcessDetector : IEditorDetector
                 if (lines.Count > 500) lines.RemoveAt(0);
             }
 
-            // 匹配 PID 对应的 Project path
-            // 格式示例：
-            // "Built-in GUIDs are exported to 'D:/xxx/ProjectSettings/...'"
-            // 或者直接找 "[PID]" 标记后面的 Project
+            // Match ProjectSettings/ path to infer project root
             for (int i = lines.Count - 1; i >= 0; i--)
             {
                 var l = lines[i];
-                // 尝试匹配 ProjectSettings/ 路径反推
                 var m = Regex.Match(l, @"['""](?<path>.+?)[\\/]ProjectSettings[\\/]");
                 if (m.Success)
                 {
@@ -232,7 +219,7 @@ public class UnityProcessDetector : IEditorDetector
         }
         catch
         {
-            // 忽略
+            // Ignore
         }
         return null;
     }

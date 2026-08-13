@@ -1,16 +1,10 @@
-// ============================================================
-// Author:  Tristin Wen
-// Email:   Tristin_Wen@outlook.com
-// File:    EditorInstance.cs
-// ============================================================
-
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
 namespace Tristin.MCPManager.Core.Models;
 
 /// <summary>
-/// 编辑器实例（通用模型，未来可扩展 Figma、Blender 等）
+/// Represents a discovered editor instance (Unity, Figma, Blender, etc.).
 /// </summary>
 public class EditorInstance : INotifyPropertyChanged
 {
@@ -19,37 +13,37 @@ public class EditorInstance : INotifyPropertyChanged
     private string?     _errorMessage;
 
     /// <summary>
-    /// 编辑器类型：Unity / Figma / Blender 等
+    /// Editor type: Unity / Figma / Blender, etc.
     /// </summary>
     public required string EditorType { get; init; }
 
     /// <summary>
-    /// 进程 ID
+    /// OS process ID.
     /// </summary>
     public required int ProcessId { get; init; }
 
     /// <summary>
-    /// 项目名称
+    /// Project display name.
     /// </summary>
     public required string ProjectName { get; init; }
 
     /// <summary>
-    /// 项目路径
+    /// Absolute project path on disk.
     /// </summary>
     public required string ProjectPath { get; init; }
 
     /// <summary>
-    /// 编辑器版本
+    /// Editor version string.
     /// </summary>
     public required string Version { get; init; }
 
     /// <summary>
-    /// 可执行文件路径
+    /// Path to the editor executable (if available).
     /// </summary>
     public string? ExecutablePath { get; init; }
 
     /// <summary>
-    /// 当前连接状态
+    /// Current connection state.
     /// </summary>
     public EditorState State
     {
@@ -58,7 +52,7 @@ public class EditorInstance : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// Bridge 监听端口（注册后填充）
+    /// Bridge endpoint (filled after registration).
     /// </summary>
     public string? BridgePort
     {
@@ -67,7 +61,7 @@ public class EditorInstance : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// 错误信息（State=Error 时填充）
+    /// Error message (populated when State == Error).
     /// </summary>
     public string? ErrorMessage
     {
@@ -76,7 +70,7 @@ public class EditorInstance : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// 显示名称（UI 用）
+    /// Human-readable display string for UI.
     /// </summary>
     public string DisplayName => $"{ProjectName} ({Version}) [PID:{ProcessId}]";
 

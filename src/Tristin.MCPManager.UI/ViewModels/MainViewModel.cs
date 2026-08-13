@@ -1,11 +1,3 @@
-// ============================================================
-// Author:  Tristin Wen
-// Email:   Tristin_Wen@outlook.com
-// File:    MainViewModel.cs
-// ============================================================
-// MVVM 主视图模型：编排 UI 与所有核心模块
-// ============================================================
-
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -24,17 +16,20 @@ using Tristin.MCPManager.Unity;
 
 namespace Tristin.MCPManager.UI.ViewModels;
 
+/// <summary>
+/// Main view model orchestrating all core services and UI state.
+/// </summary>
 public partial class MainViewModel : ViewModelBase, IDisposable
 {
-    // ========== 注入的核心服务 ==========
-    private readonly IEditorDetector        _detector;
-    private readonly IBridgeInjector        _injector;
-    private readonly NamedPipeIpcBridgeHost _ipcHost;
+    // ========== Injected core services ==========
+    private readonly IEditorDetector          _detector;
+    private readonly IBridgeInjector          _injector;
+    private readonly NamedPipeIpcBridgeHost   _ipcHost;
     private readonly SimpleHttpMcpServerProxy _mcpProxy;
-    private readonly string                 _bridgePackagePath;
-    private CancellationTokenSource?        _cts;
+    private readonly string                   _bridgePackagePath;
+    private CancellationTokenSource?          _cts;
 
-    // ========== UI 可观察属性 ==========
+    // ========== Observable properties ==========
 
     [ObservableProperty]
     private ObservableCollection<EditorInstance> _editorInstances = new();
@@ -66,22 +61,21 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private EditorInstance? _activeEditor;
 
-    // ========== 命令（显式实现，避免 MVVMTK0007 源生成器版本冲突） ==========
-    public ICommand ScanEditorsCommand  { get; }
-    public ICommand ConnectCommand      { get; }
-    public ICommand DisconnectCommand   { get; }
+    // ========== Commands (explicit init to avoid MVVMTK source generator mismatch) ==========
+    public ICommand ScanEditorsCommand { get; }
+    public ICommand ConnectCommand     { get; }
+    public ICommand DisconnectCommand  { get; }
 
     partial void OnActiveEditorChanged(EditorInstance? value)
     {
         _mcpProxy.ActiveEditor = value;
     }
 
-    // ========== 构造与初始化 ==========
+    // ========== Constructor ==========
 
     public MainViewModel()
     {
-        // 定位 Unity Bridge Package 路径（发布模式：与 UI 同级的 unity-bridge-package 目录）
-        // 优先用 [AppDomain.BaseDir]/../../../../unity-bridge-package，其次用 当前Dir/unity-bridge-package
+        // Locate the Unity Bridge Package directory
         var candidates = new[]
         {
             Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "unity-bridge-package")),
@@ -101,7 +95,6 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         _ipcHost.BridgeRegistered     += OnBridgeRegistered;
         _ipcHost.BridgeDisconnected   += OnBridgeDisconnected;
 
-        // 显式初始化命令（避免不同版本 MVVMTK 源生成器兼容性问题）
         ScanEditorsCommand = new AsyncRelayCommand(ScanEditorsAsync, () => !IsScanning);
         ConnectCommand     = new AsyncRelayCommand(ConnectAsync,     () => !IsConnecting && SelectedEditor != null);
         DisconnectCommand  = new AsyncRelayCommand(DisconnectAsync,  () => !IsDisconnecting && SelectedEditor != null);
@@ -113,11 +106,11 @@ public partial class MainViewModel : ViewModelBase, IDisposable
 
         AppendLog($"[Info] Bridge package located: {_bridgePackagePath}");
 
-        // 启动 IPC Host
+        // Start IPC Host
         await _ipcHost.StartAsync(NamedPipeIpcBridgeHost.DefaultPipeName, _cts.Token);
         AppendLog($"[Info] IPC Host listening on NamedPipe '{NamedPipeIpcBridgeHost.DefaultPipeName}'");
 
-        // 启动 MCP Proxy
+        // Start MCP Proxy
         try
         {
             await _mcpProxy.StartAsync(McpEndpoint, _cts.Token);
@@ -128,12 +121,12 @@ public partial class MainViewModel : ViewModelBase, IDisposable
             AppendLog($"[Warn] MCP Proxy start failed: {ex.Message} (port in use? check firewall)");
         }
 
-        // 启动后台扫描
+        // Start background scan
         _ = _detector.StartWatchAsync(3000, OnEditorListChanged, _cts.Token);
-        _ = ScanEditorsAsync(); // 立即扫一次
+        _ = ScanEditorsAsync(); // immediate first scan
     }
 
-    // ========== 命令 ==========
+    // ========== Commands ==========
 
     private async Task ScanEditorsAsync()
     {
@@ -144,21 +137,16 @@ public partial class MainViewModel : ViewModelBase, IDisposable
             var before = EditorInstances.Count;
             var list   = await _detector.DetectAsync(_cts?.Token ?? default);
 
-            // 增量更新：保留已有对象的状态引用（如果 PID 相同）
+            // Incremental update: preserve existing state for matching PIDs
             var existingByPid = EditorInstances.ToDictionary(e => e.ProcessId);
-            var merged        = new List<EditorInstance>(list.Count);
+            List<EditorInstance> merged = new(list.Count);
 
             foreach (var inst in list)
             {
                 if (existingByPid.TryGetValue(inst.ProcessId, out var oldOne))
-                {
-                    // 仅刷新不敏感字段，保留 State / ErrorMessage
-                    merged.Add(oldOne);
-                }
+                    merged.Add(oldOne); // keep existing reference with its state
                 else
-                {
                     merged.Add(inst);
-                }
             }
 
             EditorInstances = new ObservableCollection<EditorInstance>(merged);
@@ -213,7 +201,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
             InjectStatus = "Bridge package injected. Waiting Unity to load Bridge and register via IPC ...";
             AppendLog($"[Inject] Done for {target.ProjectName}. Waiting Bridge registration ...");
 
-            // 等待最多 60s Bridge 注册
+            // Wait up to 60s for Bridge registration
             for (int i = 0; i < 60; i++)
             {
                 if (_ipcHost.RegisteredBridges.ContainsKey(target.ProcessId))
@@ -223,10 +211,10 @@ public partial class MainViewModel : ViewModelBase, IDisposable
 
             if (_ipcHost.RegisteredBridges.ContainsKey(target.ProcessId))
             {
-                target.State    = EditorState.Connected;
-                ActiveEditor    = target;
-                InjectStatus    = "Connected ✓";
-                InjectProgress  = 100;
+                target.State   = EditorState.Connected;
+                ActiveEditor   = target;
+                InjectStatus   = "Connected";
+                InjectProgress = 100;
                 AppendLog($"[OK] {target.ProjectName} connected. All MCP calls will route to it.");
             }
             else
@@ -290,7 +278,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
-    // ========== 事件回调 ==========
+    // ========== Event callbacks ==========
 
     private Task OnEditorListChanged(IReadOnlyList<EditorInstance> newList)
     {
@@ -304,7 +292,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         var match = EditorInstances.FirstOrDefault(e => e.ProcessId == reg.Pid);
         if (match != null && match.State != EditorState.Connected)
         {
-            match.State    = EditorState.Connected;
+            match.State      = EditorState.Connected;
             match.BridgePort = reg.Endpoint;
             if (ActiveEditor == null)
             {
@@ -326,14 +314,14 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
-    // ========== 日志帮助 ==========
+    // ========== Log helpers ==========
 
     private void AppendLog(string line)
     {
         var ts = DateTime.Now.ToString("HH:mm:ss");
         LogText = $"[{ts}] {line}{Environment.NewLine}{LogText}";
-        // 保留最多 300 行
-        var nl = 0;
+        // Keep at most 300 lines
+        var nl  = 0;
         var cut = 0;
         for (int i = 0; i < LogText.Length; i++)
         {

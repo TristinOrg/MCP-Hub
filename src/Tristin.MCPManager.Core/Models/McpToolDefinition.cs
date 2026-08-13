@@ -1,33 +1,27 @@
-// ============================================================
-// Author:  Tristin Wen
-// Email:   Tristin_Wen@outlook.com
-// File:    McpToolDefinition.cs
-// ============================================================
-
 namespace Tristin.MCPManager.Core.Models;
 
 /// <summary>
-/// MCP 工具定义（简化版，用于 Proxy 层转发）
+/// Simplified MCP tool definition used by the proxy layer for routing.
 /// </summary>
 public class McpToolDefinition
 {
     /// <summary>
-    /// 工具名称
+    /// Tool name.
     /// </summary>
     public required string Name { get; set; }
 
     /// <summary>
-    /// 工具描述
+    /// Human-readable description.
     /// </summary>
     public required string Description { get; set; }
 
     /// <summary>
-    /// JSON Schema 参数
+    /// JSON Schema for the tool's input parameters.
     /// </summary>
     public object? InputSchema { get; set; }
 
     /// <summary>
-    /// 来源编辑器实例 PID（路由用）
+    /// Source editor PID (for routing).
     /// </summary>
     public int SourceEditorPid { get; set; }
 }

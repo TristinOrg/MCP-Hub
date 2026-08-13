@@ -1,14 +1,3 @@
-// ============================================================
-// Author:  Tristin Wen
-// Email:   Tristin_Wen@outlook.com
-// File:    NamedPipeIpcBridgeHost.cs
-// ============================================================
-// Runtime Manager 端 NamedPipe IPC 主机
-// - 监听来自 Unity Bridge 的连接
-// - 接收 register 消息，维护 Bridge 注册表
-// - 提供 InvokeToolAsync / ListToolsAsync 路由调用
-// ============================================================
-
 using System.Collections.Concurrent;
 using System.IO;
 using System.IO.Pipes;
@@ -20,6 +9,10 @@ using Tristin.MCPManager.Core.Models;
 
 namespace Tristin.MCPManager.Core.Ipc;
 
+/// <summary>
+/// Named Pipe IPC host for the Runtime Manager side.
+/// Accepts Bridge connections, maintains a registration table, and routes tool calls.
+/// </summary>
 public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
 {
     public const string DefaultPipeName = "TristinMCP_RuntimeManager";
@@ -34,7 +27,7 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
     {
         get
         {
-            var dict = new Dictionary<int, BridgeRegistration>();
+            Dictionary<int, BridgeRegistration> dict = new();
             foreach (var (pid, conn) in _bridges)
                 if (conn.Registration != null)
                     dict[pid] = conn.Registration;
@@ -73,12 +66,11 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
         if (!_bridges.TryGetValue(targetPid, out var conn) || conn.Writer == null)
             throw new InvalidOperationException($"Bridge PID={targetPid} not connected.");
 
-        var callId = Interlocked.Increment(ref _nextCallId);
-        // args 需要序列化为 JSON 字符串嵌入（反斜杠转义）
+        var callId      = Interlocked.Increment(ref _nextCallId);
         var argsEscaped = JsonEncodedText.Encode(arguments ?? "{}").ToString().Trim('"');
         var line        = $"{{\"id\":{callId},\"type\":\"tool\",\"name\":\"{toolName}\",\"args\":\"{argsEscaped}\"}}";
 
-        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource<string> tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
         using var reg = cancellationToken.Register(() => tcs.TrySetCanceled());
 
         _pending[callId] = new PendingCall(tcs, targetPid);
@@ -94,7 +86,7 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
             throw;
         }
 
-        // 30s 超时兜底
+        // 30s timeout fallback
         using var timeout = new CancellationTokenSource(30000);
         using var linked  = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try
@@ -110,7 +102,7 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
 
     public Task<IReadOnlyList<McpToolDefinition>> ListToolsAsync(int targetPid, CancellationToken cancellationToken = default)
     {
-        // MVP：Unity 端预定义的工具列表
+        // MVP: predefined tool list
         IReadOnlyList<McpToolDefinition> list = new List<McpToolDefinition>
         {
             new() { Name = "ping", Description = "Ping the bridge", InputSchema = new {}, SourceEditorPid = targetPid },
@@ -136,7 +128,7 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
         return Task.FromResult(list);
     }
 
-    // ========== 内部实现 ==========
+    // ========== Internal ==========
 
     private async Task RunAcceptLoopAsync(string pipeName, CancellationToken ct)
     {
@@ -154,18 +146,18 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
 
                 await server.WaitForConnectionAsync(ct);
 
-                // 每个连接一个独立任务
+                // Each connection gets its own task
                 _ = Task.Run(() => HandleConnectionAsync(server, ct), ct);
-                server = null; // 所有权转移给处理任务
+                server = null; // ownership transferred
             }
             catch (OperationCanceledException)
             {
                 throw;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 try { server?.Dispose(); } catch { /* ignore */ }
-                // 避免 100% CPU 死循环
+                // Avoid 100% CPU tight loop
                 try { await Task.Delay(500, ct); } catch (OperationCanceledException) { throw; }
             }
         }
@@ -177,8 +169,8 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
         try
         {
             using (pipe)
-            using (var reader = new StreamReader(pipe, new UTF8Encoding(false)))
-            using (var writer = new StreamWriter(pipe, new UTF8Encoding(false)) { NewLine = "\n", AutoFlush = true })
+            using (StreamReader reader = new(pipe, new UTF8Encoding(false)))
+            using (StreamWriter writer = new(pipe, new UTF8Encoding(false)) { NewLine = "\n", AutoFlush = true })
             {
                 bridgeConn = new BridgeConnection(writer);
 
@@ -193,11 +185,11 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
-            // 正常退出
+            // Normal shutdown
         }
         catch
         {
-            // 连接异常断开
+            // Connection lost
         }
         finally
         {
@@ -205,7 +197,7 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
             {
                 var pid = bridgeConn.Registration.Pid;
                 _bridges.TryRemove(pid, out _);
-                // 清理该 PID 下所有 pending call
+                // Clean up all pending calls for this PID
                 foreach (var (callId, pc) in _pending.ToArray())
                 {
                     if (pc.TargetPid == pid)
@@ -227,9 +219,8 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
         {
             try
             {
-                // 提取关键字段
-                var pidMatch       = Regex.Match(line, "\"pid\"\\s*:\\s*(?<pid>\\d+)");
-                var editorTypeMatch = Regex.Match(line, "\"editorType\"\\s*:\\s*\"(?<v>[^\"]+)\"");
+                var pidMatch         = Regex.Match(line, "\"pid\"\\s*:\\s*(?<pid>\\d+)");
+                var editorTypeMatch  = Regex.Match(line, "\"editorType\"\\s*:\\s*\"(?<v>[^\"]+)\"");
                 var projectNameMatch = Regex.Match(line, "\"projectName\"\\s*:\\s*\"(?<v>[^\"]+)\"");
                 var projectPathMatch = Regex.Match(line, "\"projectPath\"\\s*:\\s*\"(?<v>[^\"]+)\"");
                 var endpointMatch    = Regex.Match(line, "\"endpoint\"\\s*:\\s*\"(?<v>[^\"]+)\"");
@@ -249,20 +240,17 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
                     try { BridgeRegistered?.Invoke(this, reg); } catch { /* ignore */ }
                 }
             }
-            catch { /* 解析失败忽略 */ }
+            catch { /* parse failure — ignore */ }
             return Task.CompletedTask;
         }
 
         // 2) ping / pong
         if (Regex.IsMatch(line, "\"type\"\\s*:\\s*\"ping\""))
-        {
-            // 客户端 -> 服务器 ping：我们回 pong（通过连接的 writer）
             return RespondPingAsync(bridgeConn.Writer);
-        }
         if (Regex.IsMatch(line, "\"type\"\\s*:\\s*\"pong\""))
             return Task.CompletedTask;
 
-        // 3) tool call response: {"id":N,"ok":true,"result":"..."}  or {"id":N,"ok":false,"error":"..."}
+        // 3) tool call response: {"id":N,"ok":true,"result":"..."} or {"id":N,"ok":false,"error":"..."}
         var idMatch = Regex.Match(line, "\"id\"\\s*:\\s*(?<id>\\d+)");
         if (idMatch.Success && Regex.IsMatch(line, "\"ok\""))
         {
@@ -274,7 +262,6 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
 
                 if (ok)
                 {
-                    // 提取 result，里面可能是 JSON 也可能是转义字符串
                     var resultMatch = Regex.Match(line, "\"result\"\\s*:\\s*(?<v>.*)\\s*\\}$", RegexOptions.Singleline);
                     var result = resultMatch.Success ? resultMatch.Groups["v"].Value.TrimEnd(',', ' ') : "null";
                     pending.Tcs.TrySetResult(result);
@@ -306,8 +293,8 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
 
     private class BridgeConnection : IDisposable
     {
-        public StreamWriter         Writer         { get; }
-        public BridgeRegistration?  Registration   { get; set; }
+        public StreamWriter         Writer       { get; }
+        public BridgeRegistration?  Registration { get; set; }
 
         public BridgeConnection(StreamWriter writer) => Writer = writer;
 
@@ -321,6 +308,7 @@ public class NamedPipeIpcBridgeHost : IIpcBridgeHost, IAsyncDisposable
     {
         public TaskCompletionSource<string> Tcs       { get; }
         public int                          TargetPid { get; }
+
         public PendingCall(TaskCompletionSource<string> tcs, int targetPid)
         {
             Tcs       = tcs;

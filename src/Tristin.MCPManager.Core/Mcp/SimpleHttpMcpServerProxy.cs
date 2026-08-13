@@ -1,15 +1,3 @@
-// ============================================================
-// Author:  Tristin Wen
-// Email:   Tristin_Wen@outlook.com
-// File:    SimpleHttpMcpServerProxy.cs
-// ============================================================
-// 简化版 MCP Server Proxy：
-// - 以 HTTP + JSON-RPC 2.0 形式暴露 MCP 端点（MVP）
-// - 正式版本可切换为 MCP 标准的 Streamable HTTP (SSE) 或 stdio
-// - 负责将 Codex 的工具调用路由到当前活动的 Bridge
-// ============================================================
-
-using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -19,9 +7,13 @@ using Tristin.MCPManager.Core.Models;
 
 namespace Tristin.MCPManager.Core.Mcp;
 
+/// <summary>
+/// Simplified MCP Server Proxy: exposes a JSON-RPC 2.0 over HTTP endpoint
+/// and routes tool calls to the currently active Bridge.
+/// </summary>
 public class SimpleHttpMcpServerProxy : IMcpServerProxy, IAsyncDisposable
 {
-    private readonly IIpcBridgeHost _bridgeHost;
+    private readonly IIpcBridgeHost  _bridgeHost;
     private HttpListener?           _listener;
     private CancellationTokenSource? _cts;
     private Task?                   _runLoop;
@@ -85,7 +77,7 @@ public class SimpleHttpMcpServerProxy : IMcpServerProxy, IAsyncDisposable
             }
             catch
             {
-                // 等待上下文出错（如 listener 停止）
+                // GetContext failed (e.g. listener stopped)
                 try { await Task.Delay(50, ct); } catch (OperationCanceledException) { throw; }
                 continue;
             }
@@ -127,21 +119,21 @@ public class SimpleHttpMcpServerProxy : IMcpServerProxy, IAsyncDisposable
         try
         {
             string body;
-            using (var sr = new StreamReader(req.InputStream, req.ContentEncoding ?? Encoding.UTF8))
+            using (StreamReader sr = new(req.InputStream, req.ContentEncoding ?? Encoding.UTF8))
                 body = await sr.ReadToEndAsync(ct);
 
             JsonNode? rpcDoc = null;
             if (!string.IsNullOrWhiteSpace(body))
             {
                 try { rpcDoc = JsonNode.Parse(body); }
-                catch { /* parse 失败走下面的路由处理 */ }
+                catch { /* parse failed — fall through to REST routing */ }
             }
 
-            // 1) JSON-RPC 处理（MCP tools/call 等）
+            // 1) JSON-RPC handling (MCP tools/call etc.)
             if (rpcDoc != null)
             {
-                var method = rpcDoc["method"]?.GetValue<string>();
-                var id     = rpcDoc["id"]?.ToJsonString();
+                var method  = rpcDoc["method"]?.GetValue<string>();
+                var id      = rpcDoc["id"]?.ToJsonString();
                 var @params = rpcDoc["params"];
 
                 JsonNode? result;
@@ -158,7 +150,7 @@ public class SimpleHttpMcpServerProxy : IMcpServerProxy, IAsyncDisposable
                 }
                 catch (Exception ex)
                 {
-                    var errDoc = new JsonObject
+                    JsonObject errDoc = new()
                     {
                         ["jsonrpc"] = "2.0",
                         ["id"]      = string.IsNullOrEmpty(id) ? null : JsonNode.Parse(id),
@@ -172,7 +164,7 @@ public class SimpleHttpMcpServerProxy : IMcpServerProxy, IAsyncDisposable
                     return;
                 }
 
-                var okDoc = new JsonObject
+                JsonObject okDoc = new()
                 {
                     ["jsonrpc"] = "2.0",
                     ["id"]      = string.IsNullOrEmpty(id) ? null : JsonNode.Parse(id),
@@ -182,7 +174,7 @@ public class SimpleHttpMcpServerProxy : IMcpServerProxy, IAsyncDisposable
                 return;
             }
 
-            // 2) HTTP 友好的 REST-style 路由（便于自测）
+            // 2) REST-style routes (for manual testing)
             var path = req.Url?.AbsolutePath ?? "/";
             switch (path)
             {
@@ -217,7 +209,7 @@ public class SimpleHttpMcpServerProxy : IMcpServerProxy, IAsyncDisposable
         }
     }
 
-    private JsonNode HandleInitialize()
+    private static JsonNode HandleInitialize()
     {
         return new JsonObject
         {
@@ -240,7 +232,7 @@ public class SimpleHttpMcpServerProxy : IMcpServerProxy, IAsyncDisposable
             return new JsonArray();
 
         var tools = await _bridgeHost.ListToolsAsync(ActiveEditor.ProcessId, ct);
-        var arr = new JsonArray();
+        JsonArray arr = new();
         foreach (var t in tools)
         {
             arr.Add(new JsonObject
@@ -267,25 +259,31 @@ public class SimpleHttpMcpServerProxy : IMcpServerProxy, IAsyncDisposable
         var resultStr = await _bridgeHost.InvokeToolAsync(
             ActiveEditor.ProcessId, name, argsJson, ct);
 
-        // resultStr 本身就是 JSON，尝试解析后返回，失败则作为字符串返回
+        // resultStr is already JSON — try to parse, fall back to raw string
         try
         {
             var parsed = JsonNode.Parse(resultStr);
-            return new JsonObject { ["content"] = new JsonArray
+            return new JsonObject
             {
-                new JsonObject
+                ["content"] = new JsonArray
                 {
-                    ["type"] = "text",
-                    ["text"] = parsed?.ToJsonString() ?? resultStr
+                    new JsonObject
+                    {
+                        ["type"] = "text",
+                        ["text"] = parsed?.ToJsonString() ?? resultStr
+                    }
                 }
-            }};
+            };
         }
         catch
         {
-            return new JsonObject { ["content"] = new JsonArray
+            return new JsonObject
             {
-                new JsonObject { ["type"] = "text", ["text"] = resultStr }
-            }};
+                ["content"] = new JsonArray
+                {
+                    new JsonObject { ["type"] = "text", ["text"] = resultStr }
+                }
+            };
         }
     }
 
@@ -301,7 +299,7 @@ public class SimpleHttpMcpServerProxy : IMcpServerProxy, IAsyncDisposable
     private static string Escape(string s)
     {
         if (string.IsNullOrEmpty(s)) return string.Empty;
-        var sb = new StringBuilder(s.Length);
+        StringBuilder sb = new(s.Length);
         foreach (var c in s)
         {
             switch (c)

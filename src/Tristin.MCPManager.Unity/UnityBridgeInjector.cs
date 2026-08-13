@@ -1,33 +1,27 @@
-// ============================================================
-// Author:  Tristin Wen
-// Email:   Tristin_Wen@outlook.com
-// File:    UnityBridgeInjector.cs
-// ============================================================
-
 using Tristin.MCPManager.Core.Interfaces;
 using Tristin.MCPManager.Core.Models;
 
 namespace Tristin.MCPManager.Unity;
 
 /// <summary>
-/// Unity Bridge 注入器：封装 manifest 备份 → 注入 → 等待 → 清理 全流程
+/// Orchestrates the full Unity Bridge lifecycle: backup → inject → wait for reload → cleanup.
 /// </summary>
 public class UnityBridgeInjector : IBridgeInjector
 {
     public string EditorType => "Unity";
 
     /// <summary>
-    /// Bridge Package 的本地路径（通常随 UI 一起分发）
+    /// Local path to the Bridge package (shipped alongside the UI).
     /// </summary>
     public required string BridgePackagePath { get; init; }
 
     /// <summary>
-    /// 等待 Unity 完成 Domain Reload 的轮询间隔
+    /// Polling interval (ms) when waiting for Unity domain reload.
     /// </summary>
     public int ReloadPollIntervalMs { get; init; } = 1000;
 
     /// <summary>
-    /// 等待 Unity 重新编译的最大时长
+    /// Maximum time (seconds) to wait for Unity recompilation.
     /// </summary>
     public int MaxReloadWaitSeconds { get; init; } = 180;
 
@@ -47,21 +41,18 @@ public class UnityBridgeInjector : IBridgeInjector
 
         try
         {
-            // Step 1: 备份 manifest
+            // Step 1: backup manifest
             progress?.Report((5, "Backup Packages/manifest.json ..."));
             await UnityManifestManager.BackupAsync(instance.ProjectPath, ct);
 
-            // Step 2: 注入依赖
+            // Step 2: inject dependency
             progress?.Report((20, "Inject MCP Bridge package dependency ..."));
             await UnityManifestManager.InjectBridgeDependencyAsync(
                 instance.ProjectPath, BridgePackagePath, ct);
 
-            // Step 3: 等待 Unity 自动检测 manifest 变化并完成 reload
+            // Step 3: wait for Unity to detect manifest change and reload
             progress?.Report((35, "Waiting Unity Editor to detect manifest change and resolve packages ..."));
 
-            // Unity 对 manifest.json 的检测并不总是实时的，这里做一个启发式等待：
-            // 如果注入后 5s 还没看到编译状态，说明 Unity 可能没自动刷新，
-            // 但大多数情况下 Unity 2021+ 会自动检测文件变化。
             await WaitForReloadStableAsync(instance, progress, ct);
 
             progress?.Report((100, "Bridge injected. Waiting Bridge to register via IPC ..."));
@@ -70,8 +61,8 @@ public class UnityBridgeInjector : IBridgeInjector
         catch (Exception ex)
         {
             instance.ErrorMessage = $"Inject failed: {ex.Message}";
-            // 尝试回滚
-            try { await RestoreAsync(instance.ProjectPath, ct); } catch { /* 忽略 */ }
+            // Attempt rollback
+            try { await RestoreAsync(instance.ProjectPath, ct); } catch { /* ignore */ }
             return false;
         }
     }
@@ -99,9 +90,8 @@ public class UnityBridgeInjector : IBridgeInjector
     }
 
     /// <summary>
-    /// 启发式等待 Unity 完成 package resolve + compile + reload
-    /// 通过检查 Library/ScriptAssemblies/*.dll 最后修改时间的变化来判断。
-    /// 这里采用简化版：等待一个固定的稳定期。
+    /// Heuristically wait for Unity to finish package resolve + compile + reload
+    /// by monitoring the last-write time of Library/ScriptAssemblies/Assembly-CSharp.dll.
     /// </summary>
     private async Task WaitForReloadStableAsync(
         EditorInstance                              instance,
@@ -122,13 +112,12 @@ public class UnityBridgeInjector : IBridgeInjector
         {
             ct.ThrowIfCancellationRequested();
 
-            // 检查是否重新加载完成：dll 文件修改时间是否变化后稳定
+            // Check if reload completed: dll write time changed and then stabilized for 3s
             bool seemsStable = false;
             if (File.Exists(markerFile))
             {
                 var currentWrite = File.GetLastWriteTimeUtc(markerFile);
                 var sinceChange  = DateTime.UtcNow - currentWrite;
-                // 修改时间变化后且已经过了至少 3s 没有再次变化 → 认为稳定
                 if ((initialWriteTime == null || currentWrite != initialWriteTime)
                     && sinceChange.TotalSeconds >= 3)
                 {

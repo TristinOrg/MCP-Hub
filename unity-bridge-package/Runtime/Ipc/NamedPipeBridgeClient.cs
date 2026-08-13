@@ -1,16 +1,10 @@
-// ============================================================
-// Author:  Tristin Wen
-// Email:   Tristin_Wen@outlook.com
-// File:    NamedPipeBridgeClient.cs
-// ============================================================
-// Unity Bridge -> Runtime Manager 的 NamedPipe IPC 客户端
-// 协议：
-//   - 先发送 1 行注册 JSON（BridgeRegistration）
-//   - 之后每行一个请求/响应：
-//       REQ:  {"id":1,"type":"tool","name":"unity.create_gameobject","args":"{...}"}
-//       RSP:  {"id":1,"ok":true,"result":"..."} 或 {"id":1,"ok":false,"error":"..."}
-//   - 心跳：PING -> PONG
-// ============================================================
+// NamedPipe IPC client: Unity Bridge -> Runtime Manager.
+// Protocol (JSON-lines over NamedPipe):
+//   1. Send one register JSON line on connect
+//   2. Then each line is a request or response:
+//        REQ: {"id":1,"type":"tool","name":"unity.create_gameobject","args":"{...}"}
+//        RSP: {"id":1,"ok":true,"result":"..."} or {"id":1,"ok":false,"error":"..."}
+//   3. Heartbeat: PING -> PONG
 
 #if UNITY_EDITOR
 using System;
@@ -24,6 +18,9 @@ using UnityEngine;
 
 namespace Tristin.MCPBridge
 {
+    /// <summary>
+    /// NamedPipe client connecting the Unity Bridge to the Runtime Manager.
+    /// </summary>
     public static class NamedPipeBridgeClient
     {
         public const string ServerPipeName = "TristinMCP_RuntimeManager";
@@ -35,7 +32,7 @@ namespace Tristin.MCPBridge
             int                             pid,
             Func<string, string, string>    onCommand)
         {
-            var cts = new CancellationTokenSource();
+            CancellationTokenSource cts = new();
             _ = Task.Run(() => RunLoopAsync(endpoint, projectName, projectPath, pid, onCommand, cts.Token), cts.Token);
             return new DisposableAction(() =>
             {
@@ -51,26 +48,26 @@ namespace Tristin.MCPBridge
             Func<string, string, string>    onCommand,
             CancellationToken               ct)
         {
-            var sendChannel = Channel.CreateUnbounded<string>();
+            Channel<string> sendChannel = Channel.CreateUnbounded<string>();
 
             while (!ct.IsCancellationRequested)
             {
                 try
                 {
-                    // 连接 Runtime Manager 的 NamedPipe Server
+                    // Connect to Runtime Manager's NamedPipe server
                     using var pipe = new NamedPipeClientStream(
-                        serverName:         ".",
-                        pipeName:           ServerPipeName,
-                        direction:          PipeDirection.InOut,
-                        options:            PipeOptions.Asynchronous);
+                        serverName: ".",
+                        pipeName:   ServerPipeName,
+                        direction:  PipeDirection.InOut,
+                        options:    PipeOptions.Asynchronous);
 
                     await pipe.ConnectAsync(3000, ct);
                     pipe.ReadMode = PipeStreamMode.Byte;
 
-                    using var reader = new StreamReader(pipe, new UTF8Encoding(false));
-                    using var writer = new StreamWriter(pipe, new UTF8Encoding(false)) { NewLine = "\n", AutoFlush = true };
+                    using StreamReader  reader = new(pipe, new UTF8Encoding(false));
+                    using StreamWriter  writer = new(pipe, new UTF8Encoding(false)) { NewLine = "\n", AutoFlush = true };
 
-                    // 1) 发送注册消息
+                    // 1) Send registration
                     var registerJson = JsonUtility.ToJson(new BridgeRegistrationMsg
                     {
                         type        = "register",
@@ -83,7 +80,7 @@ namespace Tristin.MCPBridge
                     await writer.WriteLineAsync(registerJson);
                     await writer.FlushAsync();
 
-                    // 2) 启动发送循环
+                    // 2) Start send loop
                     var sendTask = Task.Run(async () =>
                     {
                         await foreach (var line in sendChannel.Reader.ReadAllAsync(ct))
@@ -93,7 +90,7 @@ namespace Tristin.MCPBridge
                         }
                     }, ct);
 
-                    // 3) 启动心跳
+                    // 3) Start heartbeat
                     var hbTask = Task.Run(async () =>
                     {
                         while (!ct.IsCancellationRequested)
@@ -103,7 +100,7 @@ namespace Tristin.MCPBridge
                         }
                     }, ct);
 
-                    // 4) 接收循环
+                    // 4) Receive loop
                     string? line;
                     while ((line = await reader.ReadLineAsync()) != null)
                     {
@@ -111,8 +108,7 @@ namespace Tristin.MCPBridge
 
                         try
                         {
-                            // MVP：用简易 JSON 字符串解析避免引入 Newtonsoft
-                            // 实际可使用 System.Text.Json
+                            // MVP: simple string parsing to avoid Newtonsoft dependency
                             if (line.Contains("\"type\":\"ping\"") || line.Contains("\"type\":\"pong\""))
                             {
                                 if (line.Contains("\"type\":\"ping\""))
@@ -129,7 +125,7 @@ namespace Tristin.MCPBridge
                                 var id   = toolMatch.Groups["id"].Value;
                                 var name = toolMatch.Groups["name"].Value;
                                 var args = toolMatch.Groups["args"].Value;
-                                // 还原 args 转义
+                                // Unescape args
                                 args = args.Replace("\\\"", "\"").Replace("\\\\", "\\");
 
                                 string result;
@@ -163,7 +159,7 @@ namespace Tristin.MCPBridge
                     Debug.LogWarning($"[MCPBridge] IPC disconnected, retry in 3s: {ex.Message}");
                 }
 
-                // 重连间隔
+                // Reconnect delay
                 try { await Task.Delay(3000, ct); } catch (OperationCanceledException) { throw; }
             }
         }
@@ -171,7 +167,7 @@ namespace Tristin.MCPBridge
         private static string EscapeJson(string s)
         {
             if (string.IsNullOrEmpty(s)) return string.Empty;
-            var sb = new StringBuilder(s.Length);
+            StringBuilder sb = new(s.Length);
             foreach (var c in s)
             {
                 switch (c)
@@ -193,7 +189,6 @@ namespace Tristin.MCPBridge
         [Serializable]
         private class BridgeRegistrationMsg
         {
-            // 字段顺序小写匹配 JSON 原生
             public string type        = null!;
             public string editorType  = null!;
             public string projectName = null!;
@@ -206,7 +201,9 @@ namespace Tristin.MCPBridge
         {
             private readonly Action _action;
             private int _disposed;
+
             public DisposableAction(Action action) { _action = action; }
+
             public void Dispose()
             {
                 if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 0) _action();

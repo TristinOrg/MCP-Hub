@@ -1,10 +1,4 @@
-// ============================================================
-// Author:  Tristin Wen
-// Email:   Tristin_Wen@outlook.com
-// File:    CommandDispatcher.cs
-// ============================================================
-// Unity Editor 命令分发：MVP 只实现少量示例命令，后续可扩展
-// ============================================================
+// Unity Editor command dispatcher: MVP with a few sample commands, extensible later.
 
 #if UNITY_EDITOR
 using System;
@@ -14,10 +8,13 @@ using UnityEngine;
 
 namespace Tristin.MCPBridge
 {
+    /// <summary>
+    /// Dispatches tool calls to UnityEditor API handlers on the main thread.
+    /// </summary>
     public static class CommandDispatcher
     {
         /// <summary>
-        /// 命令注册表：name -> handler(argsJson) => resultJson
+        /// Command registry: name -> handler(argsJson) => resultJson
         /// </summary>
         private static readonly Dictionary<string, Func<string, string>> _handlers = new()
         {
@@ -30,17 +27,17 @@ namespace Tristin.MCPBridge
         };
 
         /// <summary>
-        /// 在主线程同步执行命令（UnityEditor API 必须在主线程）
+        /// Execute a command synchronously on the main thread.
         /// </summary>
         public static string Dispatch(string toolName, string argsJson)
         {
             if (!_handlers.TryGetValue(toolName, out var handler))
                 throw new NotSupportedException($"Tool '{toolName}' not supported. Available: {string.Join(", ", _handlers.Keys)}");
 
-            string? result = null;
-            Exception? error = null;
+            string?   result   = null;
+            Exception? error   = null;
 
-            // 切换到主线程
+            // Marshal to main thread
             if (EditorApplication.isPlayingOrWillChangePlaymode)
             {
                 result = handler(argsJson);
@@ -67,7 +64,7 @@ namespace Tristin.MCPBridge
                 };
                 EditorApplication.update += cb;
 
-                // 自旋等待主线程执行完毕
+                // Spin-wait for main thread execution
                 var spinStart = DateTime.UtcNow;
                 while (!Volatile.Read(ref dispatched))
                 {
@@ -81,7 +78,7 @@ namespace Tristin.MCPBridge
             return result ?? "null";
         }
 
-        // ========== 具体命令实现 ==========
+        // ========== Command implementations ==========
 
         private static string HandleEditorInfo()
         {
@@ -91,7 +88,7 @@ namespace Tristin.MCPBridge
         private static string HandleListScenes()
         {
             var scenes = EditorBuildSettings.scenes;
-            var sb = new System.Text.StringBuilder("[");
+            System.Text.StringBuilder sb = new("[");
             for (int i = 0; i < scenes.Length; i++)
             {
                 var s = scenes[i];
@@ -104,14 +101,14 @@ namespace Tristin.MCPBridge
 
         private static string HandleCreateGameObject(string argsJson)
         {
-            // argsJson MVP 简化：{"name":"NewObj","parent":null}
+            // MVP simplified parsing: {"name":"NewObj","parent":null}
             string name = "NewGameObject";
             try
             {
                 var m = System.Text.RegularExpressions.Regex.Match(argsJson, "\"name\"\\s*:\\s*\"(?<n>[^\"]+)\"");
                 if (m.Success) name = m.Groups["n"].Value;
             }
-            catch { /* 忽略，用默认名 */ }
+            catch { /* use default name */ }
 
             var go = new GameObject(name);
             Selection.activeGameObject = go;

@@ -1,10 +1,4 @@
-// ============================================================
-// Author:  Tristin Wen
-// Email:   Tristin_Wen@outlook.com
-// File:    BridgeBootstrap.cs
-// ============================================================
-// Bridge 启动入口：[InitializeOnLoad] 保证 Unity 域重载后自动启动
-// ============================================================
+// Bridge bootstrap: [InitializeOnLoad] ensures the Bridge auto-starts after any domain reload.
 
 #if UNITY_EDITOR
 using System;
@@ -16,7 +10,7 @@ using UnityEngine;
 namespace Tristin.MCPBridge
 {
     /// <summary>
-    /// Unity Editor 域加载后自动启动 Bridge
+    /// Auto-starts the Bridge after Unity domain reload.
     /// </summary>
     [InitializeOnLoad]
     public static class BridgeBootstrap
@@ -26,7 +20,7 @@ namespace Tristin.MCPBridge
 
         static BridgeBootstrap()
         {
-            // 延迟一帧启动，避免 Unity 启动阶段的竞态
+            // Delay one frame to avoid startup race conditions
             EditorApplication.delayCall += TryStartBridge;
         }
 
@@ -37,16 +31,15 @@ namespace Tristin.MCPBridge
 
             try
             {
-                // 1. 构造 Bridge 信息
+                // 1. Build Bridge info
                 var projectPath = Directory.GetParent(Application.dataPath)!.FullName;
                 var projectName = Path.GetFileName(projectPath);
                 var pid         = System.Diagnostics.Process.GetCurrentProcess().Id;
 
-                // 2. 生成唯一 IPC 端点（NamedPipe 名称）
+                // 2. Generate unique IPC endpoint (NamedPipe name)
                 var endpoint = $"TristinMCP_{pid}";
 
-                // 3. 启动 IPC 客户端（连接 Runtime Manager）并发送注册消息
-                //    当前 MVP：使用 NamedPipe + JSON 行协议
+                // 3. Start IPC client (connects to Runtime Manager) and send registration
                 _bridgeHost = NamedPipeBridgeClient.Start(
                     endpoint:     endpoint,
                     projectName:  projectName,

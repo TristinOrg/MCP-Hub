@@ -1,43 +1,37 @@
-// ============================================================
-// Author:  Tristin Wen
-// Email:   Tristin_Wen@outlook.com
-// File:    EditorState.cs
-// ============================================================
-
 namespace Tristin.MCPManager.Core.Models;
 
 /// <summary>
-/// 编辑器实例连接状态
+/// Connection lifecycle state for an editor instance.
 /// </summary>
 public enum EditorState
 {
     /// <summary>
-    /// 可用，未连接
+    /// Detected but not connected.
     /// </summary>
     Available,
 
     /// <summary>
-    /// 正在注入 Bridge
+    /// Bridge package is being injected.
     /// </summary>
     Injecting,
 
     /// <summary>
-    /// 等待 Bridge 注册
+    /// Injection done, waiting for Bridge to register via IPC.
     /// </summary>
     WaitingForBridge,
 
     /// <summary>
-    /// 已连接
+    /// Bridge registered and ready to accept commands.
     /// </summary>
     Connected,
 
     /// <summary>
-    /// 正在断开连接/清理
+    /// Cleanup / restore in progress.
     /// </summary>
     Disconnecting,
 
     /// <summary>
-    /// 错误状态
+    /// An error occurred.
     /// </summary>
     Error
 }

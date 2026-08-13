@@ -30,7 +30,7 @@
                 </StackPanel>
 
                 <StackPanel Grid.Column="2" Orientation="Vertical" HorizontalAlignment="Right">
-                    <TextBlock Foreground="#a0a0b0" FontSize="10">MCP Endpoint (Codex 连接地址)</TextBlock>
+                    <TextBlock Foreground="#a0a0b0" FontSize="10">MCP Endpoint (Codex connect URL)</TextBlock>
                     <Grid ColumnDefinitions="*,Auto">
                         <TextBox Grid.Column="0" Text="{Binding McpEndpoint}" Width="260"
                                  FontFamily="Consolas" FontSize="12" Padding="6,4"
@@ -161,8 +161,8 @@
                 <Border Grid.Row="2" Padding="10,6" CornerRadius="8" Background="#1a1a24" Margin="0,0,0,6">
                     <StackPanel Orientation="Horizontal" Spacing="16">
                         <TextBlock Foreground="#888" FontSize="10">
-                            <Run Text="Codex 配置方法："/>
-                            <Run Foreground="#5eead4" Text="mcp.json 添加 command: curl -X POST http://localhost:9000/ + JSON-RPC body"/>
+                            <Run Text="Codex setup: "/>
+                            <Run Foreground="#5eead4" Text="add to mcp.json — POST http://localhost:9000/ with JSON-RPC body"/>
                         </TextBlock>
                     </StackPanel>
                 </Border>

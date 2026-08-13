@@ -8,6 +8,9 @@ using Tristin.MCPManager.UI.Views;
 
 namespace Tristin.MCPManager.UI;
 
+/// <summary>
+/// Application entry point and lifecycle manager.
+/// </summary>
 public partial class App : Application
 {
     public override void Initialize()
@@ -37,7 +40,6 @@ public partial class App : Application
                 try { await vm.StartAsync(); }
                 catch (Exception ex)
                 {
-                    // 启动失败：至少让窗口保留（MainViewModel 的 LogText 在构造时即已创建，无法直接访问）
                     Console.Error.WriteLine("[App] Start failed: " + ex);
                 }
             }

@@ -1,22 +1,15 @@
-// ============================================================
-// Author:  Tristin Wen
-// Email:   Tristin_Wen@outlook.com
-// File:    UnityManifestManager.cs
-// ============================================================
-
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace Tristin.MCPManager.Unity;
 
 /// <summary>
-/// Unity Packages/manifest.json 管理器
-/// 负责备份、注入 MCP Bridge 依赖、恢复原始状态
+/// Manages Unity Packages/manifest.json: backup, inject Bridge dependency, restore.
 /// </summary>
 public class UnityManifestManager
 {
-    public const string BackupFolderName = ".tristin_mcp_backup";
-    public const string BridgePackageName = "com.tristin.unity-mcp-bridge";
+    public const string BackupFolderName   = ".tristin_mcp_backup";
+    public const string BridgePackageName  = "com.tristin.unity-mcp-bridge";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -24,19 +17,19 @@ public class UnityManifestManager
     };
 
     /// <summary>
-    /// 获取 manifest.json 路径
+    /// Get the manifest.json path for a project.
     /// </summary>
     public static string GetManifestPath(string projectPath)
         => Path.Combine(projectPath, "Packages", "manifest.json");
 
     /// <summary>
-    /// 获取备份目录
+    /// Get the backup directory path.
     /// </summary>
     public static string GetBackupDir(string projectPath)
         => Path.Combine(projectPath, BackupFolderName);
 
     /// <summary>
-    /// 备份当前 manifest.json
+    /// Back up the current manifest.json.
     /// </summary>
     public static Task BackupAsync(string projectPath, CancellationToken ct = default)
     {
@@ -49,7 +42,7 @@ public class UnityManifestManager
 
         Directory.CreateDirectory(backupDir);
 
-        // 如果已有备份，说明上次未正常清理，直接覆盖（但先做时间戳副本以防万一）
+        // If a previous backup exists, archive it with a timestamp
         if (File.Exists(backupPath))
         {
             var tsBackup = Path.Combine(backupDir, $"manifest_{DateTime.Now:yyyyMMdd_HHmmss}.json.bak");
@@ -58,7 +51,7 @@ public class UnityManifestManager
 
         File.Copy(manifestPath, backupPath, true);
 
-        // 写入 .gitignore 防止备份目录被提交
+        // Write .gitignore to prevent backup from being committed
         var gitignorePath = Path.Combine(backupDir, ".gitignore");
         File.WriteAllText(gitignorePath, "*\n");
 
@@ -66,10 +59,10 @@ public class UnityManifestManager
     }
 
     /// <summary>
-    /// 向 manifest.json 注入本地 Bridge 包依赖
+    /// Inject the local Bridge package dependency into manifest.json.
     /// </summary>
-    /// <param name="projectPath">Unity 项目路径</param>
-    /// <param name="bridgePackagePath">Bridge package 磁盘路径</param>
+    /// <param name="projectPath">Unity project path.</param>
+    /// <param name="bridgePackagePath">On-disk path to the Bridge package.</param>
     public static async Task InjectBridgeDependencyAsync(
         string projectPath,
         string bridgePackagePath,
@@ -79,7 +72,7 @@ public class UnityManifestManager
         if (!File.Exists(manifestPath))
             throw new FileNotFoundException($"manifest.json not found: {manifestPath}");
 
-        // 规范化 package 路径（Unity 支持 "file:/" 前缀的本地依赖）
+        // Normalize package path (Unity supports "file:/" prefix for local deps)
         var normalizedPath = bridgePackagePath.Replace("\\", "/");
         if (!normalizedPath.StartsWith("file:"))
             normalizedPath = "file:" + normalizedPath;
@@ -91,13 +84,12 @@ public class UnityManifestManager
         deps[BridgePackageName] = normalizedPath;
         doc["dependencies"]     = deps;
 
-        // 保留原始缩进风格：2 空格
-        await using var fs = new FileStream(manifestPath, FileMode.Truncate, FileAccess.Write);
+        await using FileStream fs = new(manifestPath, FileMode.Truncate, FileAccess.Write);
         await JsonSerializer.SerializeAsync(fs, doc, JsonOptions, ct);
     }
 
     /// <summary>
-    /// 恢复 manifest.json 为备份状态，并清理备份目录
+    /// Restore manifest.json from backup and clean up the backup directory.
     /// </summary>
     public static Task<bool> RestoreAsync(string projectPath, CancellationToken ct = default)
     {
@@ -108,10 +100,10 @@ public class UnityManifestManager
         if (!File.Exists(backupPath))
             return Task.FromResult(false);
 
-        // 恢复 manifest
+        // Restore manifest
         File.Copy(backupPath, manifestPath, true);
 
-        // 清理备份目录（保留目录空壳也可以，这里直接全部删）
+        // Clean up backup directory
         try
         {
             if (Directory.Exists(backupDir))
@@ -119,14 +111,14 @@ public class UnityManifestManager
         }
         catch
         {
-            // 删除失败不影响主要结果
+            // Deletion failure does not affect the main result
         }
 
         return Task.FromResult(true);
     }
 
     /// <summary>
-    /// 检查是否已注入 Bridge
+    /// Check whether the Bridge is currently injected.
     /// </summary>
     public static async Task<bool> IsBridgeInjectedAsync(string projectPath, CancellationToken ct = default)
     {
@@ -146,7 +138,7 @@ public class UnityManifestManager
     }
 
     /// <summary>
-    /// 检查备份是否存在（用于判断是否需要恢复）
+    /// Check whether a backup exists (used to determine if restore is needed).
     /// </summary>
     public static bool HasBackup(string projectPath)
         => File.Exists(Path.Combine(GetBackupDir(projectPath), "manifest.json"));
