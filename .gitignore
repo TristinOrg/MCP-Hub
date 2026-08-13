@@ -1,0 +1,42 @@
+# ========== .NET / Build ==========
+bin/
+obj/
+*.user
+*.userprefs
+*.suo
+*.sln.docstates
+*.sln.ide
+.vs/
+.vscode/
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# ========== Publish ==========
+publish/
+dist/
+artifacts/
+
+# ========== Unity ==========
+# Unity Bridge 开发期间的临时文件
+unity-bridge-package/**/Library/
+unity-bridge-package/**/Temp/
+unity-bridge-package/**/obj/
+unity-bridge-package/**/bin/
+
+# Unity Editor 产生的备份目录（也是 Runtime 注入的临时目录，绝对不能提交）
+**/.tristin_mcp_backup/
+
+# ========== OS ==========
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# ========== Logs ==========
+*.log
+logs/
+Logs/
