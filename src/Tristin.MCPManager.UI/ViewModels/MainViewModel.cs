@@ -18,7 +18,7 @@ namespace Tristin.MCPManager.UI.ViewModels;
 /// <summary>
 /// Coordinates Unity discovery, Coplay package injection, and the Hub endpoints.
 /// </summary>
-public partial class MainViewModel : ViewModelBase, IDisposable
+public partial class MainViewModel : ViewModelBase
 {
     private static readonly Uri CoplayEndpoint = new("http://127.0.0.1:8080/");
 
@@ -28,6 +28,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     private readonly CoplayMcpClient      _coplayClient;
     private readonly HttpMcpReverseProxy  _mcpProxy;
     private readonly CancellationTokenSource _cts = new();
+    private int _shutdownStarted;
 
     [ObservableProperty]
     private ObservableCollection<EditorInstance> _editorInstances = [];
@@ -282,15 +283,31 @@ public partial class MainViewModel : ViewModelBase, IDisposable
             LogText = string.Join(Environment.NewLine, lines.Take(300));
     }
 
-    public void Dispose()
+    /// <summary>
+    /// Restores injected projects and stops all Hub-owned processes and listeners.
+    /// </summary>
+    public async Task ShutdownAsync()
     {
+        if (Interlocked.Exchange(ref _shutdownStarted, 1) != 0)
+            return;
+
         _cts.Cancel();
-        _coplayClient.Dispose();
-        _ = Task.Run(async () =>
+        foreach (var editor in EditorInstances.Where(editor => UnityManifestManager.HasBackup(editor.ProjectPath)))
         {
-            await _mcpProxy.DisposeAsync();
-            await _coplayServer.DisposeAsync();
-            _cts.Dispose();
-        });
+            try
+            {
+                await _injector.CleanupAsync(editor);
+                UnityWindowActivator.ActivateUnityWindow(editor.ProcessId);
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"[Error] Failed to restore {editor.ProjectName}: {ex.Message}");
+            }
+        }
+
+        _coplayClient.Dispose();
+        await _mcpProxy.DisposeAsync();
+        await _coplayServer.DisposeAsync();
+        _cts.Dispose();
     }
 }

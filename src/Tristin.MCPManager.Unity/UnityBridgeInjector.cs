@@ -60,8 +60,10 @@ public class UnityBridgeInjector : IBridgeInjector
         if (instance.EditorType != "Unity") return false;
         try
         {
-            await UnityManifestManager.RestoreAsync(instance.ProjectPath, ct);
-            return true;
+            if (!UnityManifestManager.HasBackup(instance.ProjectPath))
+                return !await UnityManifestManager.IsBridgeInjectedAsync(instance.ProjectPath, ct);
+
+            return await UnityManifestManager.RestoreAsync(instance.ProjectPath, ct);
         }
         catch (Exception ex)
         {

@@ -28,10 +28,19 @@ public partial class App : Application
                 DataContext = vm,
             };
             desktop.MainWindow.Opened += OnWindowOpened;
-            desktop.Exit += (_, _) =>
+            desktop.ShutdownRequested += OnShutdownRequested;
+
+            async void OnShutdownRequested(object? sender, ShutdownRequestedEventArgs args)
             {
-                try { vm.Dispose(); } catch { /* ignore */ }
-            };
+                args.Cancel = true;
+                try { await vm.ShutdownAsync(); }
+                finally
+                {
+                    desktop.ShutdownRequested -= OnShutdownRequested;
+                    args.Cancel = false;
+                    desktop.Shutdown();
+                }
+            }
 
             async void OnWindowOpened(object? sender, EventArgs args)
             {

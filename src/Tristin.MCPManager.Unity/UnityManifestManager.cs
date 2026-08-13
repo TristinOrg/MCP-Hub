@@ -48,15 +48,12 @@ public static class UnityManifestManager
         if (!File.Exists(manifestPath))
             throw new FileNotFoundException($"manifest.json not found: {manifestPath}");
 
-        Directory.CreateDirectory(backupDir);
-
-        // Archive any previous backup with timestamp so we never lose the original
+        // An existing backup is the original pre-injection manifest. Never overwrite it
+        // with an already modified manifest when Connect is invoked repeatedly.
         if (File.Exists(backupPath))
-        {
-            var tsBackup = Path.Combine(backupDir, $"manifest_{DateTime.Now:yyyyMMdd_HHmmss}.json.bak");
-            File.Copy(backupPath, tsBackup, true);
-        }
+            return Task.CompletedTask;
 
+        Directory.CreateDirectory(backupDir);
         File.Copy(manifestPath, backupPath, true);
 
         // Write .gitignore to prevent backup from being committed
@@ -111,18 +108,18 @@ public static class UnityManifestManager
     /// <summary>
     /// Restore manifest.json from backup and clean up the backup directory.
     /// </summary>
-    public static Task<bool> RestoreAsync(string projectPath, CancellationToken ct = default)
+    public static async Task<bool> RestoreAsync(string projectPath, CancellationToken ct = default)
     {
         var manifestPath = GetManifestPath(projectPath);
         var backupDir    = GetBackupDir(projectPath);
         var backupPath   = Path.Combine(backupDir, "manifest.json");
 
         if (!File.Exists(backupPath))
-            return Task.FromResult(false);
+            return false;
 
         // Restore manifest by writing the backed-up content
-        var backupContent = File.ReadAllText(backupPath, System.Text.Encoding.UTF8);
-        File.WriteAllText(manifestPath, backupContent, new System.Text.UTF8Encoding(false));
+        var backupContent = await File.ReadAllTextAsync(backupPath, System.Text.Encoding.UTF8, ct);
+        await File.WriteAllTextAsync(manifestPath, backupContent, new System.Text.UTF8Encoding(false), ct);
 
         // Clean up backup directory
         try
@@ -135,7 +132,7 @@ public static class UnityManifestManager
             // Deletion failure does not affect the main result
         }
 
-        return Task.FromResult(true);
+        return true;
     }
 
     /// <summary>
