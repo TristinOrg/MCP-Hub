@@ -9,7 +9,6 @@ namespace Tristin.MCPManager.Core.Models;
 public class EditorInstance : INotifyPropertyChanged
 {
     private EditorState _state;
-    private string?     _bridgePort;
     private string?     _errorMessage;
 
     /// <summary>
@@ -49,15 +48,6 @@ public class EditorInstance : INotifyPropertyChanged
     {
         get => _state;
         set => SetField(ref _state, value);
-    }
-
-    /// <summary>
-    /// Bridge endpoint (filled after registration).
-    /// </summary>
-    public string? BridgePort
-    {
-        get => _bridgePort;
-        set => SetField(ref _bridgePort, value);
     }
 
     /// <summary>

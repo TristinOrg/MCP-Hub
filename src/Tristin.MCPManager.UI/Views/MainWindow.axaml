@@ -25,7 +25,7 @@
                     <TextBlock Text="⬢" Foreground="#5eead4" FontSize="28" VerticalAlignment="Center"/>
                     <StackPanel Margin="10,0,0,0">
                         <TextBlock Text="MCP Hub" Foreground="White" FontSize="18" FontWeight="Bold"/>
-                        <TextBlock Text="Universal MCP Multi-Server Manager" Foreground="#a0a0b0" FontSize="11"/>
+                        <TextBlock Text="Coplay MCP Multi-Unity Hub" Foreground="#a0a0b0" FontSize="11"/>
                     </StackPanel>
                 </StackPanel>
 
@@ -162,7 +162,7 @@
                     <StackPanel Orientation="Horizontal" Spacing="16">
                         <TextBlock Foreground="#888" FontSize="10">
                             <Run Text="Codex setup: "/>
-                            <Run Foreground="#5eead4" Text="add to mcp.json — POST http://localhost:9000/ with JSON-RPC body"/>
+                            <Run Foreground="#5eead4" Text="configure HTTP MCP URL as http://127.0.0.1:9000/mcp"/>
                         </TextBlock>
                     </StackPanel>
                 </Border>

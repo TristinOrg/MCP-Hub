@@ -3,12 +3,12 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Tristin.MCPManager.Core.Interfaces;
-using Tristin.MCPManager.Core.Ipc;
 using Tristin.MCPManager.Core.Mcp;
 using Tristin.MCPManager.Core.Models;
 using Tristin.MCPManager.Unity;
@@ -16,28 +16,27 @@ using Tristin.MCPManager.Unity;
 namespace Tristin.MCPManager.UI.ViewModels;
 
 /// <summary>
-/// Main view model orchestrating all core services and UI state.
+/// Coordinates Unity discovery, Coplay package injection, and the Hub endpoints.
 /// </summary>
 public partial class MainViewModel : ViewModelBase, IDisposable
 {
-    // ========== Injected core services ==========
-    private readonly IEditorDetector          _detector;
-    private readonly IBridgeInjector          _injector;
-    private readonly NamedPipeIpcBridgeHost   _ipcHost;
-    private readonly SimpleHttpMcpServerProxy _mcpProxy;
-    private readonly string                   _bridgePackagePath;
-    private CancellationTokenSource?          _cts;
+    private static readonly Uri CoplayEndpoint = new("http://127.0.0.1:8080/");
 
-    // ========== Observable properties ==========
+    private readonly IEditorDetector      _detector;
+    private readonly IBridgeInjector      _injector;
+    private readonly CoplayMcpServer      _coplayServer;
+    private readonly CoplayMcpClient      _coplayClient;
+    private readonly HttpMcpReverseProxy  _mcpProxy;
+    private readonly CancellationTokenSource _cts = new();
 
     [ObservableProperty]
-    private ObservableCollection<EditorInstance> _editorInstances = new();
+    private ObservableCollection<EditorInstance> _editorInstances = [];
 
     [ObservableProperty]
     private EditorInstance? _selectedEditor;
 
     [ObservableProperty]
-    private string _mcpEndpoint = "http://localhost:9000/";
+    private string _mcpEndpoint = "http://127.0.0.1:9000/mcp";
 
     [ObservableProperty]
     private string _logText = string.Empty;
@@ -60,10 +59,42 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private EditorInstance? _activeEditor;
 
-    // ========== Commands (explicit init to avoid MVVMTK source generator mismatch) ==========
     public AsyncRelayCommand ScanEditorsCommand { get; }
     public AsyncRelayCommand ConnectCommand     { get; }
     public AsyncRelayCommand DisconnectCommand  { get; }
+
+    public MainViewModel()
+    {
+        var packagePath = LocateBridgePackage();
+
+        _detector     = new UnityProcessDetector();
+        _injector     = new UnityBridgeInjector { BridgePackagePath = packagePath };
+        _coplayServer = new CoplayMcpServer(CoplayEndpoint, line => AppendLog($"[Coplay] {line}"));
+        _coplayClient = new CoplayMcpClient(CoplayEndpoint);
+        _mcpProxy     = new HttpMcpReverseProxy();
+
+        ScanEditorsCommand = new AsyncRelayCommand(ScanEditorsAsync, () => !IsScanning);
+        ConnectCommand     = new AsyncRelayCommand(ConnectAsync, CanConnect);
+        DisconnectCommand  = new AsyncRelayCommand(DisconnectAsync, CanDisconnect);
+    }
+
+    public async Task StartAsync()
+    {
+        try
+        {
+            AppendLog("[Info] Starting official Coplay MCP server ...");
+            await _coplayServer.StartAsync(_cts.Token);
+            await _mcpProxy.StartAsync(new Uri("http://127.0.0.1:9000/"), CoplayEndpoint, _cts.Token);
+            AppendLog($"[Info] MCP Hub ready at {McpEndpoint}");
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[Error] Startup failed: {ex.Message}");
+        }
+
+        _ = _detector.StartWatchAsync(3000, OnEditorListChanged, _cts.Token);
+        await ScanEditorsAsync();
+    }
 
     partial void OnSelectedEditorChanged(EditorInstance? value)
     {
@@ -71,113 +102,36 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         DisconnectCommand.NotifyCanExecuteChanged();
     }
 
-    partial void OnIsConnectingChanged(bool value)
-    {
-        ConnectCommand.NotifyCanExecuteChanged();
-    }
+    partial void OnIsConnectingChanged(bool value) => ConnectCommand.NotifyCanExecuteChanged();
+    partial void OnIsDisconnectingChanged(bool value) => DisconnectCommand.NotifyCanExecuteChanged();
+    partial void OnIsScanningChanged(bool value) => ScanEditorsCommand.NotifyCanExecuteChanged();
 
-    partial void OnIsDisconnectingChanged(bool value)
-    {
-        DisconnectCommand.NotifyCanExecuteChanged();
-    }
+    private bool CanConnect()
+        => !IsConnecting && SelectedEditor is { State: EditorState.Available or EditorState.Error };
 
-    partial void OnIsScanningChanged(bool value)
-    {
-        ScanEditorsCommand.NotifyCanExecuteChanged();
-    }
-
-    partial void OnActiveEditorChanged(EditorInstance? value)
-    {
-        _mcpProxy.ActiveEditor = value;
-    }
-
-    // ========== Constructor ==========
-
-    public MainViewModel()
-    {
-        // Locate the Unity Bridge Package directory
-        var candidates = new[]
-        {
-            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "unity-bridge-package")),
-            Path.Combine(Environment.CurrentDirectory, "unity-bridge-package"),
-            Path.Combine(AppContext.BaseDirectory, "unity-bridge-package")
-        };
-        _bridgePackagePath = candidates.FirstOrDefault(Directory.Exists)
-            ?? throw new DirectoryNotFoundException(
-                "Can not locate unity-bridge-package. Tried:\n" + string.Join("\n", candidates));
-
-        _detector = new UnityProcessDetector();
-        _injector = new UnityBridgeInjector { BridgePackagePath = _bridgePackagePath };
-        _ipcHost  = new NamedPipeIpcBridgeHost();
-        _mcpProxy = new SimpleHttpMcpServerProxy(_ipcHost);
-
-        // Wire IPC host diagnostic log sink to UI log
-        NamedPipeIpcBridgeHost.LogSink = AppendLog;
-
-        _mcpProxy.ActiveEditorChanged += (_, e) => ActiveEditor = e;
-        _ipcHost.BridgeRegistered     += OnBridgeRegistered;
-        _ipcHost.BridgeDisconnected   += OnBridgeDisconnected;
-
-        ScanEditorsCommand = new AsyncRelayCommand(ScanEditorsAsync, () => !IsScanning);
-        ConnectCommand     = new AsyncRelayCommand(ConnectAsync,     () => !IsConnecting && SelectedEditor != null);
-        DisconnectCommand  = new AsyncRelayCommand(DisconnectAsync,  () => !IsDisconnecting && SelectedEditor != null);
-    }
-
-    public async Task StartAsync()
-    {
-        _cts = new CancellationTokenSource();
-
-        AppendLog($"[Info] Bridge package located: {_bridgePackagePath}");
-
-        // Start IPC Host
-        await _ipcHost.StartAsync(NamedPipeIpcBridgeHost.DefaultPipeName, _cts.Token);
-        AppendLog($"[Info] IPC Host listening on NamedPipe '{NamedPipeIpcBridgeHost.DefaultPipeName}'");
-
-        // Start MCP Proxy
-        try
-        {
-            await _mcpProxy.StartAsync(McpEndpoint, _cts.Token);
-            AppendLog($"[Info] MCP Proxy listening on {McpEndpoint}");
-        }
-        catch (Exception ex)
-        {
-            AppendLog($"[Warn] MCP Proxy start failed: {ex.Message} (port in use? check firewall)");
-        }
-
-        // Start background scan
-        _ = _detector.StartWatchAsync(3000, OnEditorListChanged, _cts.Token);
-        _ = ScanEditorsAsync(); // immediate first scan
-    }
-
-    // ========== Commands ==========
+    private bool CanDisconnect()
+        => !IsDisconnecting && SelectedEditor is { State: EditorState.Connected or EditorState.Error };
 
     private async Task ScanEditorsAsync()
     {
-        if (IsScanning) return;
+        if (IsScanning)
+            return;
+
         try
         {
             IsScanning = true;
-            var before = EditorInstances.Count;
-            var list   = await _detector.DetectAsync(_cts?.Token ?? default);
+            var detected = await _detector.DetectAsync(_cts.Token);
+            var existing = EditorInstances.ToDictionary(editor => editor.ProcessId);
 
-            // Incremental update: preserve existing state for matching PIDs
-            var existingByPid = EditorInstances.ToDictionary(e => e.ProcessId);
-            List<EditorInstance> merged = new(list.Count);
+            EditorInstances = new ObservableCollection<EditorInstance>(
+                detected.Select(editor => existing.GetValueOrDefault(editor.ProcessId) ?? editor));
 
-            foreach (var inst in list)
-            {
-                if (existingByPid.TryGetValue(inst.ProcessId, out var oldOne))
-                    merged.Add(oldOne); // keep existing reference with its state
-                else
-                    merged.Add(inst);
-            }
-
-            EditorInstances = new ObservableCollection<EditorInstance>(merged);
             if (SelectedEditor == null || !EditorInstances.Contains(SelectedEditor))
                 SelectedEditor = EditorInstances.FirstOrDefault();
 
-            AppendLog($"[Scan] Found {EditorInstances.Count} Unity Editor(s) ({(EditorInstances.Count - before)} delta)");
+            await UpdateConnectionStatesAsync();
         }
+        catch (OperationCanceledException) when (_cts.IsCancellationRequested) { }
         catch (Exception ex)
         {
             AppendLog($"[Error] Scan failed: {ex.Message}");
@@ -191,88 +145,40 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     private async Task ConnectAsync()
     {
         if (SelectedEditor is not { } target)
-        {
-            AppendLog("[Warn] No Unity Editor selected.");
             return;
-        }
-        if (IsConnecting) return;
+
         try
         {
-            IsConnecting   = true;
-            InjectStatus   = "Starting injection ...";
-            InjectProgress = 0;
-
-            target.State        = EditorState.Injecting;
+            IsConnecting       = true;
+            target.State       = EditorState.Injecting;
             target.ErrorMessage = null;
 
-            var progress = new Progress<(int p, string m)>(t =>
+            var progress = new Progress<(int percent, string message)>(value =>
             {
-                InjectProgress = t.p;
-                InjectStatus   = t.m;
-                AppendLog($"[Inject {target.ProjectName}] {t.p}% - {t.m}");
+                InjectProgress = value.percent;
+                InjectStatus   = value.message;
+                AppendLog($"[Inject] {value.percent}% {value.message}");
             });
 
-            var ok = await _injector.InjectAsync(target, progress, _cts?.Token ?? default);
-            if (!ok)
-            {
-                target.State = EditorState.Error;
-                AppendLog($"[Error] Inject failed for PID={target.ProcessId}: {target.ErrorMessage}");
-                return;
-            }
+            if (!await _injector.InjectAsync(target, progress, _cts.Token))
+                throw new InvalidOperationException(target.ErrorMessage ?? "Package injection failed.");
 
             target.State = EditorState.WaitingForBridge;
-            InjectStatus = "Manifest injected. Waiting Unity to recompile and Bridge to register ...";
-            AppendLog($"[Inject] Done for {target.ProjectName}. Waiting Bridge registration via IPC ...");
+            if (!await WaitForCoplayConnectionAsync(target, TimeSpan.FromMinutes(3), _cts.Token))
+                throw new TimeoutException("Coplay bridge did not connect within 3 minutes. Check Unity Console and package resolution.");
 
-            // Poll for Bridge registration: 250ms interval, 120s timeout
-            // Unity needs time to detect manifest change → resolve → compile → domain reload
-            var registered = false;
-            var pollStart  = DateTime.UtcNow;
-            var lastLogSec = -1;
-            while ((DateTime.UtcNow - pollStart).TotalSeconds < 120)
-            {
-                if (_ipcHost.RegisteredBridges.ContainsKey(target.ProcessId))
-                {
-                    registered = true;
-                    break;
-                }
-
-                var elapsed = (int)(DateTime.UtcNow - pollStart).TotalSeconds;
-                if (elapsed != lastLogSec && elapsed % 5 == 0)
-                {
-                    lastLogSec = elapsed;
-                    AppendLog($"[Wait] Waiting Bridge registration ... {elapsed}s elapsed");
-                }
-
-                InjectProgress = 100;
-                InjectStatus   = $"Waiting Bridge to register ... {elapsed}s";
-                await Task.Delay(250);
-            }
-
-            if (registered)
-            {
-                target.State   = EditorState.Connected;
-                ActiveEditor   = target;
-                InjectStatus   = "Connected";
-                InjectProgress = 100;
-                AppendLog($"[OK] {target.ProjectName} connected ({(int)(DateTime.UtcNow - pollStart).TotalSeconds}s). MCP calls will route to it.");
-            }
-            else
-            {
-                target.State        = EditorState.Error;
-                target.ErrorMessage = "Bridge did not register within 120s. Check Unity console for compile errors.";
-                InjectStatus        = "Bridge not registered (timeout).";
-                AppendLog($"[Warn] Bridge for PID={target.ProcessId} not registered within 120s. Check Unity console for errors.");
-            }
+            target.State   = EditorState.Connected;
+            ActiveEditor   = target;
+            InjectProgress = 100;
+            InjectStatus   = "Connected through Coplay MCP";
+            AppendLog($"[OK] {target.ProjectName} connected. Use set_active_instance from each MCP client session when multiple projects are connected.");
         }
         catch (Exception ex)
         {
-            if (SelectedEditor != null)
-            {
-                SelectedEditor.State = EditorState.Error;
-                SelectedEditor.ErrorMessage = ex.Message;
-            }
-            AppendLog($"[Error] Connect failed: {ex}");
+            target.State        = EditorState.Error;
+            target.ErrorMessage = ex.Message;
+            InjectStatus        = ex.Message;
+            AppendLog($"[Error] Connect failed: {ex.Message}");
         }
         finally
         {
@@ -283,33 +189,26 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     private async Task DisconnectAsync()
     {
         if (SelectedEditor is not { } target)
-        {
-            AppendLog("[Warn] No Unity Editor selected.");
             return;
-        }
-        if (IsDisconnecting) return;
+
         try
         {
             IsDisconnecting = true;
             target.State    = EditorState.Disconnecting;
-            AppendLog($"[Cleanup] Restoring manifest for {target.ProjectName} ...");
 
-            var ok = await _injector.CleanupAsync(target, _cts?.Token ?? default);
-            if (ok)
-            {
-                target.State = EditorState.Available;
-                if (ReferenceEquals(ActiveEditor, target))
-                    ActiveEditor = null;
-                AppendLog($"[Cleanup] {target.ProjectName} restored. Unity will reload domain in a moment.");
-            }
-            else
-            {
-                target.State = EditorState.Error;
-                AppendLog($"[Error] Cleanup failed: {target.ErrorMessage}");
-            }
+            if (!await _injector.CleanupAsync(target, _cts.Token))
+                throw new InvalidOperationException(target.ErrorMessage ?? "Manifest restore failed.");
+
+            UnityWindowActivator.ActivateUnityWindow(target.ProcessId);
+            target.State = EditorState.Available;
+            if (ReferenceEquals(ActiveEditor, target))
+                ActiveEditor = null;
+            AppendLog($"[OK] Restored {target.ProjectName} package manifest.");
         }
         catch (Exception ex)
         {
+            target.State        = EditorState.Error;
+            target.ErrorMessage = ex.Message;
             AppendLog($"[Error] Disconnect failed: {ex.Message}");
         }
         finally
@@ -318,73 +217,80 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
-    // ========== Event callbacks ==========
-
-    private Task OnEditorListChanged(IReadOnlyList<EditorInstance> newList)
+    private async Task UpdateConnectionStatesAsync()
     {
-        _ = ScanEditorsAsync();
-        return Task.CompletedTask;
+        IReadOnlyList<CoplayUnityInstance> connected;
+        try { connected = await _coplayClient.ListInstancesAsync(_cts.Token); }
+        catch { return; }
+
+        foreach (var editor in EditorInstances)
+        {
+            if (connected.Any(instance => Matches(editor, instance)))
+                editor.State = EditorState.Connected;
+            else if (editor.State == EditorState.Connected)
+                editor.State = EditorState.Available;
+        }
     }
 
-    private void OnBridgeRegistered(object? sender, BridgeRegistration reg)
+    private async Task<bool> WaitForCoplayConnectionAsync(
+        EditorInstance target,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
     {
-        AppendLog($"[Bridge] Registered: {reg.ProjectName} PID={reg.Pid} endpoint={reg.Endpoint}");
-        var match = EditorInstances.FirstOrDefault(e => e.ProcessId == reg.Pid);
-        if (match != null && match.State != EditorState.Connected)
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
         {
-            match.State      = EditorState.Connected;
-            match.BridgePort = reg.Endpoint;
-            if (ActiveEditor == null)
+            cancellationToken.ThrowIfCancellationRequested();
+            try
             {
-                ActiveEditor = match;
-                AppendLog($"[Auto] Set Active Editor to {match.ProjectName}");
+                var instances = await _coplayClient.ListInstancesAsync(cancellationToken);
+                if (instances.Any(instance => Matches(target, instance)))
+                    return true;
             }
+            catch (HttpRequestException) { }
+
+            await Task.Delay(500, cancellationToken);
         }
+
+        return false;
     }
 
-    private void OnBridgeDisconnected(object? sender, int pid)
+    private Task OnEditorListChanged(IReadOnlyList<EditorInstance> _)
+        => ScanEditorsAsync();
+
+    private static bool Matches(EditorInstance editor, CoplayUnityInstance instance)
+        => string.Equals(editor.ProjectName, instance.Project, StringComparison.OrdinalIgnoreCase);
+
+    private static string LocateBridgePackage()
     {
-        AppendLog($"[Bridge] Disconnected PID={pid}");
-        var match = EditorInstances.FirstOrDefault(e => e.ProcessId == pid);
-        if (match != null)
-        {
-            match.State = EditorState.Available;
-            if (ReferenceEquals(ActiveEditor, match))
-                ActiveEditor = null;
-        }
-    }
+        string[] candidates =
+        [
+            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "unity-bridge-package")),
+            Path.Combine(Environment.CurrentDirectory, "unity-bridge-package"),
+            Path.Combine(AppContext.BaseDirectory, "unity-bridge-package")
+        ];
 
-    // ========== Log helpers ==========
+        return candidates.FirstOrDefault(Directory.Exists)
+            ?? throw new DirectoryNotFoundException("Cannot locate unity-bridge-package.");
+    }
 
     private void AppendLog(string line)
     {
-        var ts = DateTime.Now.ToString("HH:mm:ss");
-        LogText = $"[{ts}] {line}{Environment.NewLine}{LogText}";
-        // Keep at most 300 lines
-        var nl  = 0;
-        var cut = 0;
-        for (int i = 0; i < LogText.Length; i++)
-        {
-            if (LogText[i] == '\n')
-            {
-                nl++;
-                if (nl >= 300) { cut = i; break; }
-            }
-        }
-        if (cut > 0) LogText = LogText.Substring(0, cut);
+        LogText = $"[{DateTime.Now:HH:mm:ss}] {line}{Environment.NewLine}{LogText}";
+        var lines = LogText.Split(Environment.NewLine);
+        if (lines.Length > 300)
+            LogText = string.Join(Environment.NewLine, lines.Take(300));
     }
-
-    // ========== Dispose ==========
 
     public void Dispose()
     {
-        try { _cts?.Cancel(); } catch { /* ignore */ }
+        _cts.Cancel();
+        _coplayClient.Dispose();
         _ = Task.Run(async () =>
         {
-            try { await _ipcHost.StopAsync(); } catch { /* ignore */ }
-            try { await _mcpProxy.StopAsync(); } catch { /* ignore */ }
-            try { await _ipcHost.DisposeAsync(); } catch { /* ignore */ }
-            try { await _mcpProxy.DisposeAsync(); } catch { /* ignore */ }
+            await _mcpProxy.DisposeAsync();
+            await _coplayServer.DisposeAsync();
+            _cts.Dispose();
         });
     }
 }

@@ -11,8 +11,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tristin.MCPManager.Unity", 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tristin.MCPManager.UI", "src\Tristin.MCPManager.UI\Tristin.MCPManager.UI.csproj", "{9CA16EA1-69A7-4747-9411-2BFE7FB543DD}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "E2ETest", "E2ETest\E2ETest.csproj", "{6C80C783-7547-498B-8D8E-66D5EE590373}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -34,10 +32,6 @@ Global
 		{9CA16EA1-69A7-4747-9411-2BFE7FB543DD}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9CA16EA1-69A7-4747-9411-2BFE7FB543DD}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9CA16EA1-69A7-4747-9411-2BFE7FB543DD}.Release|Any CPU.Build.0 = Release|Any CPU
-		{6C80C783-7547-498B-8D8E-66D5EE590373}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{6C80C783-7547-498B-8D8E-66D5EE590373}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{6C80C783-7547-498B-8D8E-66D5EE590373}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{6C80C783-7547-498B-8D8E-66D5EE590373}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{DA0A591D-BCC5-409B-8700-E4321831E926} = {73760F6D-156D-4274-8D16-3B40A3F2EE8E}

@@ -1,6 +1,4 @@
-// Injects the Bridge into a Unity Editor by modifying Packages/manifest.json.
-// Unity's Package Manager resolves the local Bridge package on startup.
-// The Bridge [InitializeOnLoad] fires after domain reload and registers via IPC.
+// Injects a thin bootstrap package that loads and connects the official Coplay package.
 //
 // Author: Tristin Wen
 // Email:  Tristin_Wen@outlook.com
@@ -11,15 +9,14 @@ using Tristin.MCPManager.Core.Models;
 namespace Tristin.MCPManager.Unity;
 
 /// <summary>
-/// Injects Bridge by adding a local package dependency to manifest.json.
-/// Unity resolves it on next startup / domain reload.
+/// Injects the Coplay bootstrap package through Packages/manifest.json.
 /// </summary>
 public class UnityBridgeInjector : IBridgeInjector
 {
     public string EditorType => "Unity";
 
     /// <summary>
-    /// Local path to the Bridge package directory (contains package.json + Runtime/).
+    /// Local path to the bootstrap package directory.
     /// </summary>
     public required string BridgePackagePath { get; init; }
 
@@ -42,11 +39,12 @@ public class UnityBridgeInjector : IBridgeInjector
             progress?.Report((10, "Backup Packages/manifest.json ..."));
             await UnityManifestManager.BackupAsync(instance.ProjectPath, ct);
 
-            progress?.Report((50, "Inject MCP Bridge package dependency ..."));
+            progress?.Report((50, "Inject Coplay MCP package ..."));
             await UnityManifestManager.InjectBridgeDependencyAsync(
                 instance.ProjectPath, BridgePackagePath, ct);
 
-            progress?.Report((100, "Manifest injected. Restart Unity Editor to load Bridge."));
+            UnityWindowActivator.ActivateUnityWindow(instance.ProcessId);
+            progress?.Report((100, "Coplay package injected. Waiting for Unity package reload ..."));
             return true;
         }
         catch (Exception ex)

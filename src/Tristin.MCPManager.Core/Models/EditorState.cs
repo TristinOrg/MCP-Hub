@@ -16,7 +16,7 @@ public enum EditorState
     Injecting,
 
     /// <summary>
-    /// Injection done, waiting for Bridge to register via IPC.
+    /// Injection done, waiting for the Coplay bridge to register.
     /// </summary>
     WaitingForBridge,
 

@@ -1,8 +1,8 @@
 {
   "name":        "com.tristin.unity-mcp-bridge",
-  "version":     "0.1.0",
-  "displayName": "Tristin MCP Runtime Bridge",
-  "description": "Minimal Unity Editor Bridge for Tristin MCP Runtime Manager. Forwards MCP tool calls to Coplay MCP server.",
+  "version":     "0.2.0",
+  "displayName": "Tristin Coplay MCP Bridge",
+  "description": "Thin bootstrap package that loads and connects the official Coplay MCP for Unity package to MCP Hub.",
   "unity":       "2021.3",
   "author": {
     "name":  "Tristin Wen",
@@ -15,6 +15,6 @@
     "AI"
   ],
   "dependencies": {
-    "com.coplaydev.unity-mcp": "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main"
+    "com.coplaydev.unity-mcp": "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#v10.1.0"
   }
 }

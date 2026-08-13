@@ -14,7 +14,7 @@ namespace Tristin.MCPManager.Unity;
 /// <summary>
 /// Manages Unity Packages/manifest.json for Bridge injection and cleanup.
 /// </summary>
-public class UnityManifestManager
+public static class UnityManifestManager
 {
     public const string BackupFolderName   = ".tristin_mcp_backup";
     public const string BridgePackageName  = "com.tristin.unity-mcp-bridge";
@@ -81,7 +81,7 @@ public class UnityManifestManager
         if (!File.Exists(manifestPath))
             throw new FileNotFoundException($"manifest.json not found: {manifestPath}");
 
-        // Normalize package path (Unity supports "file:/" prefix for local deps)
+        // The wrapper package contains only connection bootstrap code and depends on Coplay.
         var normalizedPath = bridgePackagePath.Replace("\\", "/");
         if (!normalizedPath.StartsWith("file:"))
             normalizedPath = "file:" + normalizedPath;
@@ -101,7 +101,7 @@ public class UnityManifestManager
         // CRITICAL: Write new content to trigger Unity's FileSystemWatcher.
         // This MUST be a genuine content change — Unity watches for Changed events,
         // not just timestamp modifications.
-        await File.WriteAllTextAsync(manifestPath, newContent, ct);
+        await File.WriteAllTextAsync(manifestPath, newContent, new System.Text.UTF8Encoding(false), ct);
 
         // Small delay to ensure Unity's FSW has time to observe the change
         try { await Task.Delay(200, ct); }
@@ -121,8 +121,8 @@ public class UnityManifestManager
             return Task.FromResult(false);
 
         // Restore manifest by writing the backed-up content
-        var backupContent = File.ReadAllText(backupPath);
-        File.WriteAllText(manifestPath, backupContent);
+        var backupContent = File.ReadAllText(backupPath, System.Text.Encoding.UTF8);
+        File.WriteAllText(manifestPath, backupContent, new System.Text.UTF8Encoding(false));
 
         // Clean up backup directory
         try
