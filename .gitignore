@@ -40,3 +40,7 @@ desktop.ini
 *.log
 logs/
 Logs/
+
+# ========== Test / Dev ==========
+E2ETest/
+quick_test/

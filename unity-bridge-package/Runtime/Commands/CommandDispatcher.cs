@@ -130,9 +130,18 @@ namespace Tristin.MCPBridge
         private static string HandleCreatePrefab(string argsJson)
         {
             // Args: {"path":"Assets/Prefabs/Test.prefab","children":[{"name":"UI","components":["RectTransform"]},{"name":"Text","components":["TextMeshPro","RectTransform"]}]}
+            UnityEngine.Debug.Log($"[CommandDispatcher] HandleCreatePrefab argsJson: {argsJson}");
             string path = "Assets/Prefabs/NewPrefab.prefab";
             var pathMatch = System.Text.RegularExpressions.Regex.Match(argsJson, "\"path\"\\s*:\\s*\"(?<p>[^\"]+)\"");
-            if (pathMatch.Success) path = pathMatch.Groups["p"].Value;
+            if (pathMatch.Success)
+            {
+                path = pathMatch.Groups["p"].Value;
+                UnityEngine.Debug.Log($"[CommandDispatcher] Parsed path: {path}");
+            }
+            else
+            {
+                UnityEngine.Debug.LogWarning($"[CommandDispatcher] Path regex failed to match. argsJson length={argsJson.Length}");
+            }
 
             var root = new GameObject("Root");
             root.transform.localPosition = Vector3.zero;
