@@ -13,12 +13,14 @@ public sealed class CoplayMcpServer : IAsyncDisposable
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(2) };
     private readonly Uri _endpoint;
     private readonly Action<string>? _log;
+    private readonly string _applicationRoot;
     private Process? _process;
 
-    public CoplayMcpServer(Uri endpoint, Action<string>? log = null)
+    public CoplayMcpServer(Uri endpoint, Action<string>? log = null, string? applicationRoot = null)
     {
-        _endpoint = endpoint;
-        _log      = log;
+        _endpoint        = endpoint;
+        _log             = log;
+        _applicationRoot = applicationRoot ?? AppContext.BaseDirectory;
     }
 
     private bool IsRunning => _process is { HasExited: false };
@@ -38,17 +40,28 @@ public sealed class CoplayMcpServer : IAsyncDisposable
         if (IsRunning)
             throw new InvalidOperationException("Coplay MCP server is running but its health endpoint is unavailable.");
 
+        var bundledPython = Path.Combine(_applicationRoot, "runtime", "coplay", "python", "python.exe");
+        var useBundledRuntime = File.Exists(bundledPython);
         ProcessStartInfo startInfo = new()
         {
-            FileName               = "uvx",
+            FileName               = useBundledRuntime ? bundledPython : "uvx",
             UseShellExecute        = false,
             CreateNoWindow         = true,
             RedirectStandardOutput = true,
             RedirectStandardError  = true
         };
-        startInfo.ArgumentList.Add("--from");
-        startInfo.ArgumentList.Add($"mcpforunityserver=={PackageVersion}");
-        startInfo.ArgumentList.Add("mcp-for-unity");
+        if (useBundledRuntime)
+        {
+            startInfo.ArgumentList.Add("-m");
+            startInfo.ArgumentList.Add("main");
+            _log?.Invoke($"Using bundled Coplay runtime at {bundledPython}");
+        }
+        else
+        {
+            startInfo.ArgumentList.Add("--from");
+            startInfo.ArgumentList.Add($"mcpforunityserver=={PackageVersion}");
+            startInfo.ArgumentList.Add("mcp-for-unity");
+        }
         startInfo.ArgumentList.Add("--transport");
         startInfo.ArgumentList.Add("http");
         startInfo.ArgumentList.Add("--http-url");
@@ -68,7 +81,10 @@ public sealed class CoplayMcpServer : IAsyncDisposable
             _process.Dispose();
             _process = null;
             throw new InvalidOperationException(
-                "Unable to start the Coplay server. Install uv from https://docs.astral.sh/uv/ and ensure uvx is on PATH.", ex);
+                useBundledRuntime
+                    ? $"Unable to start the bundled Coplay runtime at {bundledPython}."
+                    : "Unable to start the Coplay server. Install uv from https://docs.astral.sh/uv/ and ensure uvx is on PATH.",
+                ex);
         }
 
         _process.BeginOutputReadLine();

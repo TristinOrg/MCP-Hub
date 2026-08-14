@@ -44,9 +44,11 @@ public sealed class CoplayPackageCache : IDisposable
 
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromMinutes(5) };
     private readonly SemaphoreSlim _prepareLock = new(1, 1);
+    private readonly string _applicationRoot;
 
-    public CoplayPackageCache(string? cacheRoot = null)
+    public CoplayPackageCache(string? cacheRoot = null, string? applicationRoot = null)
     {
+        _applicationRoot = applicationRoot ?? AppContext.BaseDirectory;
         CacheRoot = cacheRoot ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Tristin.MCPManager",
@@ -56,6 +58,12 @@ public sealed class CoplayPackageCache : IDisposable
     public string CacheRoot { get; }
 
     public string PackagePath => Path.Combine(CacheRoot, PackageName, PackageVersion);
+
+    public string BundledPackagePath => Path.Combine(
+        _applicationRoot,
+        "packages",
+        PackageName,
+        PackageVersion);
 
     /// <summary>
     /// Returns a validated cache path, downloading the pinned release only when necessary.
@@ -67,6 +75,12 @@ public sealed class CoplayPackageCache : IDisposable
         await _prepareLock.WaitAsync(cancellationToken);
         try
         {
+            if (await IsValidAsync(BundledPackagePath, cancellationToken))
+            {
+                progress?.Report((35, $"Using bundled Coplay package {PackageVersion}"));
+                return BundledPackagePath;
+            }
+
             if (await IsValidAsync(PackagePath, cancellationToken))
             {
                 progress?.Report((35, $"Using cached Coplay package {PackageVersion}"));
