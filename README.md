@@ -6,6 +6,33 @@ This project is dedicated to Unity and is not a universal MCP server manager. Th
 
 For MCP client configuration, multi-Unity routing, and a manual JSON-RPC/PowerShell example, see the [AI Agent Guide](MCP_AGENT_GUIDE.md).
 
+## Responsibilities and endpoints
+
+Unity MCP Hub manages the local Coplay integration lifecycle; Coplay provides the MCP protocol, Unity tools, and multi-instance routing.
+
+The Hub is responsible for:
+
+- discovering running Unity Editors;
+- preparing one shared, pinned Coplay Unity package;
+- reversibly injecting its local UPM reference into selected projects;
+- restoring `Packages/manifest.json` and `Packages/packages-lock.json` on disconnect;
+- recovering unfinished injections after an unclean shutdown;
+- starting and version-checking the matching Coplay MCP Server;
+- bundling the .NET, Python, Coplay server, and Unity package dependencies in the offline release;
+- displaying connected Unity instance state; and
+- exposing the stable public MCP endpoint at `http://127.0.0.1:9000/mcp`.
+
+Coplay is responsible for:
+
+- maintaining connections to multiple Unity Editors;
+- exposing `mcpforunity://instances` and `set_active_instance`;
+- keeping the active Unity selection isolated per MCP client session; and
+- executing all scene, prefab, GameObject, asset, console, and test tools.
+
+The Hub currently forwards `9000/mcp` transparently to Coplay at `8080/mcp`. A client can technically connect directly to `http://127.0.0.1:8080/mcp` and retain the same Unity tools and multi-instance behavior while the Coplay server is running. External clients should nevertheless use `9000/mcp`: it is the Hub's stable public contract, avoids coupling client configuration to Coplay's internal port, and leaves room for future authentication, diagnostics, policy, and upstream-port changes. Do not configure both endpoints in one client, because that exposes duplicate Unity tool sets.
+
+Multi-Unity routing is provided by Coplay rather than reimplemented by the Hub. Every independent agent should create its own MCP session, read `mcpforunity://instances`, and call `set_active_instance` before performing mutations when more than one Editor is connected.
+
 ## Requirements
 
 - .NET 8 SDK
