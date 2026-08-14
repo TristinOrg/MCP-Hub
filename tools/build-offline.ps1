@@ -9,7 +9,8 @@ $ProgressPreference    = "SilentlyContinue"
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $artifactsRoot  = Join-Path $repositoryRoot "artifacts"
 $packageName    = "UnityMCPHub-$Version-$RuntimeIdentifier"
-$publishRoot    = Join-Path $artifactsRoot $packageName
+$stagingRoot    = Join-Path $artifactsRoot ".offline-staging"
+$publishRoot    = Join-Path $stagingRoot $packageName
 $archivePath    = Join-Path $artifactsRoot "$packageName.zip"
 $checksumPath   = "$archivePath.sha256"
 $coplayVersion  = "10.1.0"
@@ -21,7 +22,7 @@ if (!(Test-Path -LiteralPath (Join-Path $coplayPackage "package.json")))
 }
 
 $resolvedArtifacts = [IO.Path]::GetFullPath($artifactsRoot)
-foreach ($path in @($publishRoot, $archivePath, $checksumPath))
+foreach ($path in @($stagingRoot, $archivePath, $checksumPath))
 {
     $resolvedPath = [IO.Path]::GetFullPath($path)
     if (!$resolvedPath.StartsWith($resolvedArtifacts, [StringComparison]::OrdinalIgnoreCase))
@@ -73,6 +74,16 @@ $bundledPython = Join-Path $publishRoot "runtime\coplay\python"
 New-Item -ItemType Directory -Path $bundledPython -Force | Out-Null
 Copy-Item -Path (Join-Path $pythonHome "*") -Destination $bundledPython -Recurse -Force
 
+# Development-only CPython content is not required to run the bundled server.
+foreach ($directory in @("Doc", "include", "libs", "Scripts", "share"))
+{
+    $developmentPath = Join-Path $bundledPython $directory
+    if (Test-Path -LiteralPath $developmentPath)
+    {
+        Remove-Item -LiteralPath $developmentPath -Recurse -Force
+    }
+}
+
 $bundledSitePackages = Join-Path $bundledPython "Lib\site-packages"
 if (Test-Path -LiteralPath $bundledSitePackages)
 {
@@ -80,6 +91,13 @@ if (Test-Path -LiteralPath $bundledSitePackages)
 }
 New-Item -ItemType Directory -Path $bundledSitePackages -Force | Out-Null
 Copy-Item -Path (Join-Path $serverSitePackages "*") -Destination $bundledSitePackages -Recurse -Force
+
+
+# Package tests and bytecode caches add substantial size but are never imported at runtime.
+Get-ChildItem -LiteralPath $bundledSitePackages -Recurse -Directory -Force |
+    Where-Object { $_.Name -in @("__pycache__", "tests") } |
+    Sort-Object { $_.FullName.Length } -Descending |
+    Remove-Item -Recurse -Force
 
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "LICENSE") -Destination (Join-Path $publishRoot "LICENSE.txt")
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "README.md") -Destination (Join-Path $publishRoot "README.md")
