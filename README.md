@@ -50,6 +50,17 @@ Each Unity project loads only `com.coplaydev.unity-mcp` through a local `file:` 
 dotnet build Tristin.MCPManager.sln --configuration Release
 ```
 
+## Complete offline package
+
+The Windows x64 offline package includes the .NET runtime, Python runtime, Coplay MCP Server 10.1.0, and the integrated Coplay Unity package. Building the package requires `uvx` only on the build machine:
+
+```powershell
+pwsh ./tools/build-offline.ps1
+pwsh ./tools/test-offline.ps1
+```
+
+Distribute the generated ZIP and SHA-256 file from `artifacts`. End users extract the ZIP, run `UnityMCPHub.exe`, connect their Unity projects, and configure MCP clients with `http://127.0.0.1:9000/mcp`. They do not need .NET, Python, `uv`, Git, or a GitHub connection.
+
 ## License
 
 MIT. MCP for Unity is maintained by Coplay and licensed separately under its repository license.

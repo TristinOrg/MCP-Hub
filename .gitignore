@@ -1,6 +1,7 @@
 # ========== .NET / Build ==========
 bin/
 obj/
+artifacts/
 *.user
 *.userprefs
 *.suo

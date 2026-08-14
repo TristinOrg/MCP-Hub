@@ -54,6 +54,9 @@ public sealed class CoplayMcpServer : IAsyncDisposable
         {
             startInfo.ArgumentList.Add("-m");
             startInfo.ArgumentList.Add("main");
+            startInfo.Environment["FASTMCP_CHECK_FOR_UPDATES"] = "off";
+            startInfo.Environment["PYTHONNOUSERSITE"]          = "1";
+            startInfo.Environment.Remove("PYTHONPATH");
             _log?.Invoke($"Using bundled Coplay runtime at {bundledPython}");
         }
         else
