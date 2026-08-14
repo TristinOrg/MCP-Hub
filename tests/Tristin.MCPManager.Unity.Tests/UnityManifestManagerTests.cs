@@ -7,7 +7,7 @@ namespace Tristin.MCPManager.Unity.Tests;
 /// </summary>
 public sealed class UnityManifestManagerTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), $"mcp-hub-tests-{Guid.NewGuid():N}");
+    private readonly string _root = Path.Combine(Path.GetTempPath(), $"unity-mcp-hub-tests-{Guid.NewGuid():N}");
 
     [Fact]
     public async Task RestoreAsync_RestoresExistingManifestAndLockFile()

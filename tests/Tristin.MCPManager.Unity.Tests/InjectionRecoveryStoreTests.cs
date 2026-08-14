@@ -5,7 +5,7 @@ namespace Tristin.MCPManager.Unity.Tests;
 /// </summary>
 public sealed class InjectionRecoveryStoreTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), $"mcp-hub-recovery-tests-{Guid.NewGuid():N}");
+    private readonly string _root = Path.Combine(Path.GetTempPath(), $"unity-mcp-hub-recovery-tests-{Guid.NewGuid():N}");
 
     [Fact]
     public async Task RegisterAndComplete_PersistUniqueCanonicalPaths()

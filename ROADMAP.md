@@ -1,4 +1,4 @@
-# Roadmap
+# Unity MCP Hub Roadmap
 
 ## Implemented
 
@@ -11,10 +11,11 @@
 - Display Coplay connection state for discovered Unity projects.
 - Delegate tool discovery, tool execution, and MCP-session instance selection to Coplay.
 - Restore manifest and lock-file state exactly, including recovery after an unclean shutdown.
+- Build a self-contained Windows x64 offline release with the .NET runtime, Python runtime, Coplay server, and Unity package.
 
 ## Next
 
 - Make public and upstream ports configurable from the UI and command line.
 - Match Coplay sessions by canonical project path when the upstream API exposes it, avoiding ambiguity between projects with the same folder name.
 - Add automated proxy protocol tests and a Unity package compilation fixture.
-- Package the desktop app for release.
+- Add an installer and optional one-click MCP client configuration.

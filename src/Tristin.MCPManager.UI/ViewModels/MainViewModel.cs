@@ -84,7 +84,7 @@ public partial class MainViewModel : ObservableObject
             AppendLog("[Info] Starting official Coplay MCP server ...");
             await _coplayServer.StartAsync(_cts.Token);
             await _mcpProxy.StartAsync(HubEndpoint, CoplayEndpoint, _cts.Token);
-            AppendLog($"[Info] MCP Hub ready at {McpEndpoint}");
+            AppendLog($"[Info] Unity MCP Hub ready at {McpEndpoint}");
         }
         catch (Exception ex)
         {
