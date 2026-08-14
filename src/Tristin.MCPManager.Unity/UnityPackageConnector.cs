@@ -3,32 +3,24 @@ using Tristin.MCPManager.Core.Models;
 namespace Tristin.MCPManager.Unity;
 
 /// <summary>
-/// Injects the Coplay bootstrap package through Packages/manifest.json.
+/// Connects Unity projects by injecting and restoring the Hub-integrated Coplay package.
 /// </summary>
-public sealed class UnityBridgeInjector
+public sealed class UnityPackageConnector
 {
-    private readonly CoplayPackageCache    _packageCache;
+    private readonly CoplayPackageCache     _packageCache;
     private readonly InjectionRecoveryStore _recoveryStore;
 
-    public UnityBridgeInjector(CoplayPackageCache packageCache, InjectionRecoveryStore recoveryStore)
+    public UnityPackageConnector(CoplayPackageCache packageCache, InjectionRecoveryStore recoveryStore)
     {
         _packageCache  = packageCache;
         _recoveryStore = recoveryStore;
     }
 
-    /// <summary>
-    /// Local path to the bootstrap package directory.
-    /// </summary>
-    public required string BridgePackagePath { get; init; }
-
-    public async Task<bool> InjectAsync(
+    public async Task<bool> ConnectAsync(
         EditorInstance                              instance,
         IProgress<(int percent, string message)>?  progress   = null,
         CancellationToken                           ct         = default)
     {
-        if (instance.EditorType != "Unity")
-            throw new ArgumentException("Only Unity editor supported", nameof(instance));
-
         if (!Directory.Exists(instance.ProjectPath))
         {
             instance.ErrorMessage = $"Project path not found: {instance.ProjectPath}";
@@ -43,10 +35,9 @@ public sealed class UnityBridgeInjector
             await UnityManifestManager.BackupAsync(instance.ProjectPath, ct);
             await _recoveryStore.RegisterAsync(instance.ProjectPath, ct);
 
-            progress?.Report((60, "Injecting cached Coplay packages ..."));
+            progress?.Report((60, "Injecting cached Coplay package ..."));
             await UnityManifestManager.InjectDependenciesAsync(
                 instance.ProjectPath,
-                BridgePackagePath,
                 coplayPackagePath,
                 ct);
 
@@ -56,7 +47,7 @@ public sealed class UnityBridgeInjector
         }
         catch (Exception ex)
         {
-            instance.ErrorMessage = $"Inject failed: {ex.Message}";
+            instance.ErrorMessage = $"Connect failed: {ex.Message}";
             try
             {
                 if (await UnityManifestManager.RestoreAsync(instance.ProjectPath, CancellationToken.None))
@@ -67,13 +58,12 @@ public sealed class UnityBridgeInjector
         }
     }
 
-    public async Task<bool> CleanupAsync(EditorInstance instance, CancellationToken ct = default)
+    public async Task<bool> DisconnectAsync(EditorInstance instance, CancellationToken ct = default)
     {
-        if (instance.EditorType != "Unity") return false;
         try
         {
             if (!UnityManifestManager.HasBackup(instance.ProjectPath))
-                return !await UnityManifestManager.IsBridgeInjectedAsync(instance.ProjectPath, ct);
+                return !await UnityManifestManager.IsInjectedAsync(instance.ProjectPath, ct);
 
             var restored = await UnityManifestManager.RestoreAsync(instance.ProjectPath, ct);
             if (restored)
@@ -82,15 +72,9 @@ public sealed class UnityBridgeInjector
         }
         catch (Exception ex)
         {
-            instance.ErrorMessage = $"Cleanup failed: {ex.Message}";
+            instance.ErrorMessage = $"Disconnect failed: {ex.Message}";
             return false;
         }
-    }
-
-    public Task<bool> IsInjectedAsync(EditorInstance instance, CancellationToken ct = default)
-    {
-        if (instance.EditorType != "Unity") return Task.FromResult(false);
-        return UnityManifestManager.IsBridgeInjectedAsync(instance.ProjectPath, ct);
     }
 
     /// <summary>

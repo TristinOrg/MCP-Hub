@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Text.Json;
+
 namespace Tristin.MCPManager.Core.Mcp;
 
 /// <summary>
@@ -9,25 +11,29 @@ public sealed class CoplayMcpServer : IAsyncDisposable
     public const string PackageVersion = "10.1.0";
 
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(2) };
+    private readonly Uri _endpoint;
+    private readonly Action<string>? _log;
     private Process? _process;
 
     public CoplayMcpServer(Uri endpoint, Action<string>? log = null)
     {
-        Endpoint = endpoint;
-        Log      = log;
+        _endpoint = endpoint;
+        _log      = log;
     }
 
-    public Uri             Endpoint { get; }
-    public Action<string>? Log      { get; }
-    public bool IsRunning => _process is { HasExited: false };
+    private bool IsRunning => _process is { HasExited: false };
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
-        if (await IsHealthyAsync(cancellationToken))
+        var runningVersion = await GetHealthyVersionAsync(cancellationToken);
+        if (runningVersion == PackageVersion)
         {
-            Log?.Invoke($"Using existing Coplay MCP server at {Endpoint}");
+            _log?.Invoke($"Using existing Coplay MCP server at {_endpoint}");
             return;
         }
+        if (runningVersion != null)
+            throw new InvalidOperationException(
+                $"Coplay MCP server {_endpoint} is version {runningVersion}; Hub requires {PackageVersion}. Stop the existing server and retry.");
 
         if (IsRunning)
             throw new InvalidOperationException("Coplay MCP server is running but its health endpoint is unavailable.");
@@ -46,11 +52,11 @@ public sealed class CoplayMcpServer : IAsyncDisposable
         startInfo.ArgumentList.Add("--transport");
         startInfo.ArgumentList.Add("http");
         startInfo.ArgumentList.Add("--http-url");
-        startInfo.ArgumentList.Add(Endpoint.AbsoluteUri.TrimEnd('/'));
+        startInfo.ArgumentList.Add(_endpoint.AbsoluteUri.TrimEnd('/'));
 
         _process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-        _process.OutputDataReceived += (_, e) => { if (e.Data != null) Log?.Invoke(e.Data); };
-        _process.ErrorDataReceived  += (_, e) => { if (e.Data != null) Log?.Invoke(e.Data); };
+        _process.OutputDataReceived += (_, e) => { if (e.Data != null) _log?.Invoke(e.Data); };
+        _process.ErrorDataReceived  += (_, e) => { if (e.Data != null) _log?.Invoke(e.Data); };
 
         try
         {
@@ -74,7 +80,7 @@ public sealed class CoplayMcpServer : IAsyncDisposable
             cancellationToken.ThrowIfCancellationRequested();
             if (_process.HasExited)
                 throw new InvalidOperationException($"Coplay MCP server exited with code {_process.ExitCode}.");
-            if (await IsHealthyAsync(cancellationToken))
+            if (await GetHealthyVersionAsync(cancellationToken) == PackageVersion)
                 return;
             await Task.Delay(500, cancellationToken);
         }
@@ -104,15 +110,23 @@ public sealed class CoplayMcpServer : IAsyncDisposable
         return Task.CompletedTask;
     }
 
-    private async Task<bool> IsHealthyAsync(CancellationToken cancellationToken)
+    private async Task<string?> GetHealthyVersionAsync(CancellationToken cancellationToken)
     {
         try
         {
-            using var response = await _httpClient.GetAsync(new Uri(Endpoint, "health"), cancellationToken);
-            return response.IsSuccessStatusCode;
+            using var response = await _httpClient.GetAsync(new Uri(_endpoint, "health"), cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                return null;
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+            return document.RootElement.TryGetProperty("version", out var version)
+                ? version.GetString()
+                : null;
         }
-        catch (HttpRequestException) { return false; }
-        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested) { return false; }
+        catch (HttpRequestException) { return null; }
+        catch (JsonException) { return null; }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested) { return null; }
     }
 
     public async ValueTask DisposeAsync()

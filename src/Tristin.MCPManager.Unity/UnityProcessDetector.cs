@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Management;
 using System.Text.RegularExpressions;
-using Tristin.MCPManager.Core.Interfaces;
 using Tristin.MCPManager.Core.Models;
 
 namespace Tristin.MCPManager.Unity;
@@ -10,11 +9,9 @@ namespace Tristin.MCPManager.Unity;
 /// Detects running Unity Editor processes by scanning process list
 /// and parsing command-line arguments (-projectPath) via WMI.
 /// </summary>
-public class UnityProcessDetector : IEditorDetector
+public sealed class UnityProcessDetector
 {
-    public string EditorType => "Unity";
-
-    public async Task<IReadOnlyList<EditorInstance>> DetectAsync(CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<EditorInstance>> DetectAsync(CancellationToken cancellationToken = default)
     {
         List<EditorInstance> result     = new();
         var                  processes = Process.GetProcessesByName("Unity");
@@ -24,19 +21,28 @@ public class UnityProcessDetector : IEditorDetector
         {
             try
             {
-                var instance = await ParseProcessAsync(process, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                var instance = ParseProcess(process);
                 // Only include main editor processes with a real -projectPath,
                 // deduplicate by project path.
                 if (instance != null && seenPaths.Add(instance.ProjectPath))
                     result.Add(instance);
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch
             {
                 // Process may have exited — skip
             }
+            finally
+            {
+                process.Dispose();
+            }
         }
 
-        return result;
+        return Task.FromResult<IReadOnlyList<EditorInstance>>(result);
     }
 
     public async Task StartWatchAsync(
@@ -83,7 +89,7 @@ public class UnityProcessDetector : IEditorDetector
     /// Parse a Unity process to extract project path, version, etc.
     /// Returns null for child processes (AssetImportWorker, ShaderCompiler, etc.).
     /// </summary>
-    private static async Task<EditorInstance?> ParseProcessAsync(Process process, CancellationToken ct)
+    private static EditorInstance? ParseProcess(Process process)
     {
         // 1. Get executable path and version from the main module
         string? exePath = null;
@@ -104,7 +110,7 @@ public class UnityProcessDetector : IEditorDetector
         }
 
         // 2. Read command line via WMI (System.Management — not wmic.exe which is deprecated)
-        var commandLine = await GetCommandLineAsync(process.Id, ct);
+        var commandLine = GetCommandLine(process.Id);
         if (string.IsNullOrEmpty(commandLine))
             return null;
 
@@ -128,12 +134,10 @@ public class UnityProcessDetector : IEditorDetector
 
         return new EditorInstance
         {
-            EditorType     = "Unity",
             ProcessId      = process.Id,
             ProjectName    = projectName,
             ProjectPath    = projectPath,
             Version        = version,
-            ExecutablePath = exePath,
             State          = EditorState.Available
         };
     }
@@ -141,7 +145,7 @@ public class UnityProcessDetector : IEditorDetector
     /// <summary>
     /// Query WMI for a process command line using System.Management (not wmic.exe).
     /// </summary>
-    private static async Task<string?> GetCommandLineAsync(int pid, CancellationToken ct)
+    private static string? GetCommandLine(int pid)
     {
         if (!OperatingSystem.IsWindows())
             return null;
@@ -164,7 +168,7 @@ public class UnityProcessDetector : IEditorDetector
             // WMI query failed
         }
 
-        return await Task.FromResult<string?>(null);
+        return null;
     }
 
     /// <summary>

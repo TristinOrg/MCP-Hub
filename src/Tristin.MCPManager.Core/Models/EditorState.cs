@@ -11,14 +11,14 @@ public enum EditorState
     Available,
 
     /// <summary>
-    /// Bridge package is being injected.
+    /// The local Coplay package is being prepared and injected.
     /// </summary>
-    Injecting,
+    Connecting,
 
     /// <summary>
-    /// Injection done, waiting for the Coplay bridge to register.
+    /// Injection is complete and the Coplay connection is pending.
     /// </summary>
-    WaitingForBridge,
+    WaitingForCoplay,
 
     /// <summary>
     /// Bridge registered and ready to accept commands.

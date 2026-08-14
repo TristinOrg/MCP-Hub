@@ -9,14 +9,14 @@ public sealed class CoplayMcpClient : IDisposable
 {
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromSeconds(5) };
 
-    public CoplayMcpClient(Uri serverEndpoint) => ServerEndpoint = serverEndpoint;
+    private readonly Uri _serverEndpoint;
 
-    public Uri ServerEndpoint { get; }
+    public CoplayMcpClient(Uri serverEndpoint) => _serverEndpoint = serverEndpoint;
 
     public async Task<IReadOnlyList<CoplayUnityInstance>> ListInstancesAsync(
         CancellationToken cancellationToken = default)
     {
-        using var response = await _httpClient.GetAsync(new Uri(ServerEndpoint, "api/instances"), cancellationToken);
+        using var response = await _httpClient.GetAsync(new Uri(_serverEndpoint, "api/instances"), cancellationToken);
         response.EnsureSuccessStatusCode();
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         var payload = await JsonSerializer.DeserializeAsync<InstancesResponse>(stream, cancellationToken: cancellationToken);
@@ -36,15 +36,6 @@ public sealed class CoplayMcpClient : IDisposable
 /// </summary>
 public sealed class CoplayUnityInstance
 {
-    [System.Text.Json.Serialization.JsonPropertyName("session_id")]
-    public string SessionId { get; init; } = string.Empty;
-
     [System.Text.Json.Serialization.JsonPropertyName("project")]
     public string Project { get; init; } = string.Empty;
-
-    [System.Text.Json.Serialization.JsonPropertyName("hash")]
-    public string Hash { get; init; } = string.Empty;
-
-    [System.Text.Json.Serialization.JsonPropertyName("unity_version")]
-    public string UnityVersion { get; init; } = string.Empty;
 }

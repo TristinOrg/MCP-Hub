@@ -1,14 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Tristin.MCPManager.Core.Interfaces;
 using Tristin.MCPManager.Core.Mcp;
 using Tristin.MCPManager.Core.Models;
 using Tristin.MCPManager.Unity;
@@ -18,12 +16,13 @@ namespace Tristin.MCPManager.UI.ViewModels;
 /// <summary>
 /// Coordinates Unity discovery, Coplay package injection, and the Hub endpoints.
 /// </summary>
-public partial class MainViewModel : ViewModelBase
+public partial class MainViewModel : ObservableObject
 {
     private static readonly Uri CoplayEndpoint = new("http://127.0.0.1:8080/");
+    private static readonly Uri HubEndpoint    = new("http://127.0.0.1:9000/");
 
-    private readonly IEditorDetector       _detector;
-    private readonly UnityBridgeInjector   _injector;
+    private readonly UnityProcessDetector  _detector;
+    private readonly UnityPackageConnector _connector;
     private readonly CoplayPackageCache    _packageCache;
     private readonly CoplayMcpServer       _coplayServer;
     private readonly CoplayMcpClient       _coplayClient;
@@ -37,17 +36,16 @@ public partial class MainViewModel : ViewModelBase
     [ObservableProperty]
     private EditorInstance? _selectedEditor;
 
-    [ObservableProperty]
-    private string _mcpEndpoint = "http://127.0.0.1:9000/mcp";
+    public string McpEndpoint => new Uri(HubEndpoint, "mcp").AbsoluteUri;
 
     [ObservableProperty]
     private string _logText = string.Empty;
 
     [ObservableProperty]
-    private int _injectProgress;
+    private int _connectionProgress;
 
     [ObservableProperty]
-    private string _injectStatus = string.Empty;
+    private string _connectionStatus = string.Empty;
 
     [ObservableProperty]
     private bool _isConnecting;
@@ -58,23 +56,15 @@ public partial class MainViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isScanning;
 
-    [ObservableProperty]
-    private EditorInstance? _activeEditor;
-
     public AsyncRelayCommand ScanEditorsCommand { get; }
     public AsyncRelayCommand ConnectCommand     { get; }
     public AsyncRelayCommand DisconnectCommand  { get; }
 
     public MainViewModel()
     {
-        var packagePath = LocateBridgePackage();
-
         _detector     = new UnityProcessDetector();
         _packageCache = new CoplayPackageCache();
-        _injector     = new UnityBridgeInjector(_packageCache, new InjectionRecoveryStore())
-        {
-            BridgePackagePath = packagePath
-        };
+        _connector    = new UnityPackageConnector(_packageCache, new InjectionRecoveryStore());
         _coplayServer = new CoplayMcpServer(CoplayEndpoint, line => AppendLog($"[Coplay] {line}"));
         _coplayClient = new CoplayMcpClient(CoplayEndpoint);
         _mcpProxy     = new HttpMcpReverseProxy();
@@ -88,12 +78,12 @@ public partial class MainViewModel : ViewModelBase
     {
         try
         {
-            foreach (var projectPath in await _injector.RecoverPendingAsync(_cts.Token))
+            foreach (var projectPath in await _connector.RecoverPendingAsync(_cts.Token))
                 AppendLog($"[Recovery] Restored package state after an unclean shutdown: {projectPath}");
 
             AppendLog("[Info] Starting official Coplay MCP server ...");
             await _coplayServer.StartAsync(_cts.Token);
-            await _mcpProxy.StartAsync(new Uri("http://127.0.0.1:9000/"), CoplayEndpoint, _cts.Token);
+            await _mcpProxy.StartAsync(HubEndpoint, CoplayEndpoint, _cts.Token);
             AppendLog($"[Info] MCP Hub ready at {McpEndpoint}");
         }
         catch (Exception ex)
@@ -111,15 +101,26 @@ public partial class MainViewModel : ViewModelBase
         DisconnectCommand.NotifyCanExecuteChanged();
     }
 
-    partial void OnIsConnectingChanged(bool value) => ConnectCommand.NotifyCanExecuteChanged();
-    partial void OnIsDisconnectingChanged(bool value) => DisconnectCommand.NotifyCanExecuteChanged();
+    partial void OnIsConnectingChanged(bool value)
+    {
+        ConnectCommand.NotifyCanExecuteChanged();
+        DisconnectCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnIsDisconnectingChanged(bool value)
+    {
+        ConnectCommand.NotifyCanExecuteChanged();
+        DisconnectCommand.NotifyCanExecuteChanged();
+    }
     partial void OnIsScanningChanged(bool value) => ScanEditorsCommand.NotifyCanExecuteChanged();
 
     private bool CanConnect()
         => !IsConnecting && SelectedEditor is { State: EditorState.Available or EditorState.Error };
 
     private bool CanDisconnect()
-        => !IsDisconnecting && SelectedEditor is { State: EditorState.Connected or EditorState.Error };
+        => !IsDisconnecting
+           && SelectedEditor is { State: EditorState.Connected or EditorState.Error } editor
+           && UnityManifestManager.HasBackup(editor.ProjectPath);
 
     private async Task ScanEditorsAsync()
     {
@@ -159,34 +160,33 @@ public partial class MainViewModel : ViewModelBase
         try
         {
             IsConnecting       = true;
-            target.State       = EditorState.Injecting;
+            target.State       = EditorState.Connecting;
             target.ErrorMessage = null;
 
             var progress = new Progress<(int percent, string message)>(value =>
             {
-                InjectProgress = value.percent;
-                InjectStatus   = value.message;
-                AppendLog($"[Inject] {value.percent}% {value.message}");
+                ConnectionProgress = value.percent;
+                ConnectionStatus   = value.message;
+                AppendLog($"[Connect] {value.percent}% {value.message}");
             });
 
-            if (!await _injector.InjectAsync(target, progress, _cts.Token))
-                throw new InvalidOperationException(target.ErrorMessage ?? "Package injection failed.");
+            if (!await _connector.ConnectAsync(target, progress, _cts.Token))
+                throw new InvalidOperationException(target.ErrorMessage ?? "Package connection failed.");
 
-            target.State = EditorState.WaitingForBridge;
+            target.State = EditorState.WaitingForCoplay;
             if (!await WaitForCoplayConnectionAsync(target, TimeSpan.FromMinutes(3), _cts.Token))
                 throw new TimeoutException("Coplay bridge did not connect within 3 minutes. Check Unity Console and package resolution.");
 
             target.State   = EditorState.Connected;
-            ActiveEditor   = target;
-            InjectProgress = 100;
-            InjectStatus   = "Connected through Coplay MCP";
+            ConnectionProgress = 100;
+            ConnectionStatus   = "Connected through Coplay MCP";
             AppendLog($"[OK] {target.ProjectName} connected. Use set_active_instance from each MCP client session when multiple projects are connected.");
         }
         catch (Exception ex)
         {
             target.State        = EditorState.Error;
             target.ErrorMessage = ex.Message;
-            InjectStatus        = ex.Message;
+            ConnectionStatus    = ex.Message;
             AppendLog($"[Error] Connect failed: {ex.Message}");
         }
         finally
@@ -205,13 +205,11 @@ public partial class MainViewModel : ViewModelBase
             IsDisconnecting = true;
             target.State    = EditorState.Disconnecting;
 
-            if (!await _injector.CleanupAsync(target, _cts.Token))
+            if (!await _connector.DisconnectAsync(target, _cts.Token))
                 throw new InvalidOperationException(target.ErrorMessage ?? "Manifest restore failed.");
 
             UnityWindowActivator.ActivateUnityWindow(target.ProcessId);
             target.State = EditorState.Available;
-            if (ReferenceEquals(ActiveEditor, target))
-                ActiveEditor = null;
             AppendLog($"[OK] Restored {target.ProjectName} package manifest.");
         }
         catch (Exception ex)
@@ -239,6 +237,9 @@ public partial class MainViewModel : ViewModelBase
             else if (editor.State == EditorState.Connected)
                 editor.State = EditorState.Available;
         }
+
+        ConnectCommand.NotifyCanExecuteChanged();
+        DisconnectCommand.NotifyCanExecuteChanged();
     }
 
     private async Task<bool> WaitForCoplayConnectionAsync(
@@ -270,19 +271,6 @@ public partial class MainViewModel : ViewModelBase
     private static bool Matches(EditorInstance editor, CoplayUnityInstance instance)
         => string.Equals(editor.ProjectName, instance.Project, StringComparison.OrdinalIgnoreCase);
 
-    private static string LocateBridgePackage()
-    {
-        string[] candidates =
-        [
-            Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "unity-bridge-package")),
-            Path.Combine(Environment.CurrentDirectory, "unity-bridge-package"),
-            Path.Combine(AppContext.BaseDirectory, "unity-bridge-package")
-        ];
-
-        return candidates.FirstOrDefault(Directory.Exists)
-            ?? throw new DirectoryNotFoundException("Cannot locate unity-bridge-package.");
-    }
-
     private void AppendLog(string line)
     {
         LogText = $"[{DateTime.Now:HH:mm:ss}] {line}{Environment.NewLine}{LogText}";
@@ -304,7 +292,7 @@ public partial class MainViewModel : ViewModelBase
         {
             try
             {
-                await _injector.CleanupAsync(editor);
+                await _connector.DisconnectAsync(editor);
                 UnityWindowActivator.ActivateUnityWindow(editor.ProcessId);
             }
             catch (Exception ex)

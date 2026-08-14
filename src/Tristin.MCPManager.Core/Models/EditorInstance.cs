@@ -4,17 +4,12 @@ using System.Runtime.CompilerServices;
 namespace Tristin.MCPManager.Core.Models;
 
 /// <summary>
-/// Represents a discovered editor instance (Unity, Figma, Blender, etc.).
+/// Represents a discovered Unity Editor instance.
 /// </summary>
 public class EditorInstance : INotifyPropertyChanged
 {
     private EditorState _state;
     private string?     _errorMessage;
-
-    /// <summary>
-    /// Editor type: Unity / Figma / Blender, etc.
-    /// </summary>
-    public required string EditorType { get; init; }
 
     /// <summary>
     /// OS process ID.
@@ -35,11 +30,6 @@ public class EditorInstance : INotifyPropertyChanged
     /// Editor version string.
     /// </summary>
     public required string Version { get; init; }
-
-    /// <summary>
-    /// Path to the editor executable (if available).
-    /// </summary>
-    public string? ExecutablePath { get; init; }
 
     /// <summary>
     /// Current connection state.

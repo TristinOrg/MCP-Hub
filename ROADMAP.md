@@ -3,9 +3,9 @@
 ## Implemented
 
 - Detect multiple running Unity Editor processes.
-- Temporarily inject and cleanly restore a UPM package dependency.
+- Temporarily inject and cleanly restore one UPM package dependency.
 - Load the official Coplay MCP for Unity package instead of duplicating Unity commands.
-- Download and validate one shared local Coplay package cache; inject only local `file:` dependencies.
+- Download and validate one shared local Coplay package cache, add Hub auto-connect integration, and inject one local `file:` dependency.
 - Start a version-matched official Coplay MCP server through `uvx`.
 - Expose a stable Hub MCP endpoint through a transparent HTTP reverse proxy.
 - Display Coplay connection state for discovered Unity projects.
@@ -17,4 +17,4 @@
 - Make public and upstream ports configurable from the UI and command line.
 - Match Coplay sessions by canonical project path when the upstream API exposes it, avoiding ambiguity between projects with the same folder name.
 - Add automated proxy protocol tests and a Unity package compilation fixture.
-- Package the desktop app and bootstrap package for release.
+- Package the desktop app for release.

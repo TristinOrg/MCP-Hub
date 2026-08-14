@@ -4,12 +4,43 @@ using System.Text.Json;
 namespace Tristin.MCPManager.Unity;
 
 /// <summary>
-/// Downloads and validates one immutable local copy of the Coplay Unity package.
+/// Downloads, integrates, and validates one local Coplay Unity package for the Hub.
 /// </summary>
 public sealed class CoplayPackageCache : IDisposable
 {
     public const string PackageName    = "com.coplaydev.unity-mcp";
     public const string PackageVersion = "10.1.0";
+
+    private const string IntegrationRelativePath = "Editor/HubIntegration/HubAutoConnect.cs";
+    private const string IntegrationSource = """
+        using MCPForUnity.Editor.Services;
+        using UnityEditor;
+
+        namespace MCPForUnity.Editor.HubIntegration
+        {
+            /// <summary>
+            /// Connects this Unity Editor to the MCP Hub-managed Coplay server.
+            /// </summary>
+            [InitializeOnLoad]
+            internal static class HubAutoConnect
+            {
+                static HubAutoConnect()
+                {
+                    EditorPrefs.SetBool("MCPForUnity.UseHttpTransport", true);
+                    EditorPrefs.SetString("MCPForUnity.HttpTransportScope", "local");
+                    EditorPrefs.SetString("MCPForUnity.HttpUrl", "http://127.0.0.1:8080");
+                    EditorApplication.delayCall += Connect;
+                }
+
+                private static async void Connect()
+                {
+                    var bridge = new BridgeControlService();
+                    if (!bridge.IsRunning)
+                        await bridge.StartAsync();
+                }
+            }
+        }
+        """;
 
     private readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromMinutes(5) };
     private readonly SemaphoreSlim _prepareLock = new(1, 1);
@@ -72,6 +103,7 @@ public sealed class CoplayPackageCache : IDisposable
                     ?? throw new InvalidDataException("Downloaded Coplay archive does not contain MCPForUnity/package.json.");
 
                 Directory.Move(packageSource, stagedPath);
+                await InstallIntegrationAsync(stagedPath, cancellationToken);
                 if (!await IsValidAsync(stagedPath, cancellationToken))
                     throw new InvalidDataException("Downloaded Coplay package identity or version does not match the pinned release.");
 
@@ -110,10 +142,32 @@ public sealed class CoplayPackageCache : IDisposable
             return root.TryGetProperty("name", out var name)
                    && root.TryGetProperty("version", out var version)
                    && name.GetString() == PackageName
-                   && version.GetString() == PackageVersion;
+                   && version.GetString() == PackageVersion
+                   && await HasValidIntegrationAsync(packagePath, cancellationToken);
         }
         catch (JsonException) { return false; }
         catch (IOException) { return false; }
+    }
+
+    private static async Task InstallIntegrationAsync(string packagePath, CancellationToken cancellationToken)
+    {
+        var integrationPath = Path.Combine(packagePath, IntegrationRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(integrationPath)!);
+        await File.WriteAllTextAsync(
+            integrationPath,
+            IntegrationSource,
+            new System.Text.UTF8Encoding(false),
+            cancellationToken);
+    }
+
+    private static async Task<bool> HasValidIntegrationAsync(string packagePath, CancellationToken cancellationToken)
+    {
+        var integrationPath = Path.Combine(packagePath, IntegrationRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(integrationPath))
+            return false;
+
+        return await File.ReadAllTextAsync(integrationPath, System.Text.Encoding.UTF8, cancellationToken)
+               == IntegrationSource;
     }
 
     public void Dispose()

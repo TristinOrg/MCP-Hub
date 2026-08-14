@@ -13,11 +13,10 @@ public sealed class UnityManifestManagerTests : IDisposable
     public async Task RestoreAsync_RestoresExistingManifestAndLockFile()
     {
         var projectPath = CreateProject("{\"dependencies\":{\"original\":\"1.0.0\"}}", "{\"dependencies\":{\"original\":{}}}");
-        var bridgePath  = CreatePackage("bridge");
         var coplayPath  = CreatePackage("coplay");
 
         await UnityManifestManager.BackupAsync(projectPath);
-        await UnityManifestManager.InjectDependenciesAsync(projectPath, bridgePath, coplayPath);
+        await UnityManifestManager.InjectDependenciesAsync(projectPath, coplayPath);
         await File.WriteAllTextAsync(UnityManifestManager.GetLockPath(projectPath), "mutated");
 
         Assert.True(await UnityManifestManager.RestoreAsync(projectPath));
@@ -30,11 +29,10 @@ public sealed class UnityManifestManagerTests : IDisposable
     public async Task RestoreAsync_RemovesLockFileWhenOriginallyMissing()
     {
         var projectPath = CreateProject("{\"dependencies\":{}}");
-        var bridgePath  = CreatePackage("bridge");
         var coplayPath  = CreatePackage("coplay");
 
         await UnityManifestManager.BackupAsync(projectPath);
-        await UnityManifestManager.InjectDependenciesAsync(projectPath, bridgePath, coplayPath);
+        await UnityManifestManager.InjectDependenciesAsync(projectPath, coplayPath);
         await File.WriteAllTextAsync(UnityManifestManager.GetLockPath(projectPath), "generated");
 
         Assert.True(await UnityManifestManager.RestoreAsync(projectPath));
@@ -42,17 +40,16 @@ public sealed class UnityManifestManagerTests : IDisposable
     }
 
     [Fact]
-    public async Task InjectDependenciesAsync_UsesOnlyLocalFileReferences()
+    public async Task InjectDependenciesAsync_UsesSingleLocalCoplayReference()
     {
         var projectPath = CreateProject("{\"dependencies\":{}}");
-        var bridgePath  = CreatePackage("bridge");
         var coplayPath  = CreatePackage("coplay");
 
-        await UnityManifestManager.InjectDependenciesAsync(projectPath, bridgePath, coplayPath);
+        await UnityManifestManager.InjectDependenciesAsync(projectPath, coplayPath);
 
         var manifest = JsonNode.Parse(await File.ReadAllTextAsync(UnityManifestManager.GetManifestPath(projectPath)))!;
-        Assert.StartsWith("file:", manifest["dependencies"]![UnityManifestManager.BridgePackageName]!.GetValue<string>());
         Assert.StartsWith("file:", manifest["dependencies"]![UnityManifestManager.CoplayPackageName]!.GetValue<string>());
+        Assert.Single(manifest["dependencies"]!.AsObject());
     }
 
     private string CreateProject(string manifest, string? lockContent = null)

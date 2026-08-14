@@ -33,6 +33,7 @@
                     <TextBlock Foreground="#a0a0b0" FontSize="10">MCP Endpoint (Codex connect URL)</TextBlock>
                     <Grid ColumnDefinitions="*,Auto">
                         <TextBox Grid.Column="0" Text="{Binding McpEndpoint}" Width="260"
+                                 IsReadOnly="True"
                                  FontFamily="Consolas" FontSize="12" Padding="6,4"
                                  Background="#1e1e2a" Foreground="#5eead4" BorderThickness="0"/>
                     </Grid>
@@ -84,10 +85,10 @@
                     </ListBox>
 
                     <!-- Progress bar -->
-                    <ProgressBar Grid.Row="2" Value="{Binding InjectProgress}" Height="5"
+                    <ProgressBar Grid.Row="2" Value="{Binding ConnectionProgress}" Height="5"
                                  Foreground="#5eead4" Background="#333"
                                  Margin="0,0,0,6" IsIndeterminate="{Binding IsConnecting}"/>
-                    <TextBlock Grid.Row="3" Text="{Binding InjectStatus}" Foreground="#9aa"
+                    <TextBlock Grid.Row="3" Text="{Binding ConnectionStatus}" Foreground="#9aa"
                                FontSize="11" Margin="0,0,0,10" Height="14"/>
 
                     <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8">
@@ -126,23 +127,23 @@
 
             <!-- Right: Active editor + Log -->
             <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto,Auto" Margin="6,0,0,0">
-                <!-- Active Editor card -->
+                <!-- Selected Editor card -->
                 <Border Grid.Row="0" Padding="12" CornerRadius="10" Background="#23232e"
                         BoxShadow="0 2 8 rgba(0,0,0,0.25)">
                     <Grid ColumnDefinitions="Auto,*,Auto">
                         <TextBlock Text="🎯" FontSize="26" VerticalAlignment="Center" Margin="0,0,10,0"/>
                         <StackPanel Grid.Column="1">
-                            <TextBlock Text="Active Editor" Foreground="#888" FontSize="10"/>
+                            <TextBlock Text="Selected Editor" Foreground="#888" FontSize="10"/>
                             <TextBlock Foreground="White" FontSize="16" FontWeight="Bold">
                                 <TextBlock.Text>
                                     <MultiBinding StringFormat="{}{0}  |  PID {1}  |  {2}">
-                                        <Binding Path="ActiveEditor.ProjectName" TargetNullValue="(none)"/>
-                                        <Binding Path="ActiveEditor.ProcessId"/>
-                                        <Binding Path="ActiveEditor.Version"/>
+                                        <Binding Path="SelectedEditor.ProjectName" TargetNullValue="(none)"/>
+                                        <Binding Path="SelectedEditor.ProcessId"/>
+                                        <Binding Path="SelectedEditor.Version"/>
                                     </MultiBinding>
                                 </TextBlock.Text>
                             </TextBlock>
-                            <TextBlock Text="{Binding ActiveEditor.ProjectPath}" Foreground="#777" FontSize="10"
+                            <TextBlock Text="{Binding SelectedEditor.ProjectPath}" Foreground="#777" FontSize="10"
                                        TextTrimming="CharacterEllipsis"/>
                         </StackPanel>
                     </Grid>

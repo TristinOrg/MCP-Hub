@@ -9,7 +9,6 @@ namespace Tristin.MCPManager.Unity;
 public static class UnityManifestManager
 {
     public const string BackupFolderName  = ".tristin_mcp_backup";
-    public const string BridgePackageName = "com.tristin.unity-mcp-bridge";
     public const string CoplayPackageName = CoplayPackageCache.PackageName;
 
     private const string ManifestFileName    = "manifest.json";
@@ -72,11 +71,10 @@ public static class UnityManifestManager
     }
 
     /// <summary>
-    /// Injects local Bridge and Coplay dependencies into manifest.json.
+    /// Injects the Hub-integrated local Coplay dependency into manifest.json.
     /// </summary>
     public static async Task InjectDependenciesAsync(
         string projectPath,
-        string bridgePackagePath,
         string coplayPackagePath,
         CancellationToken ct = default)
     {
@@ -89,7 +87,6 @@ public static class UnityManifestManager
         var deps = doc["dependencies"] as JsonObject ?? new JsonObject();
 
         deps[CoplayPackageName] = ToFileDependency(coplayPackagePath);
-        deps[BridgePackageName] = ToFileDependency(bridgePackagePath);
         doc["dependencies"]    = deps;
 
         var newContent = JsonSerializer.Serialize(doc, JsonOptions);
@@ -125,9 +122,9 @@ public static class UnityManifestManager
     }
 
     /// <summary>
-    /// Check whether the Bridge is currently injected.
+    /// Checks whether the Hub-managed Coplay dependency is currently injected.
     /// </summary>
-    public static async Task<bool> IsBridgeInjectedAsync(string projectPath, CancellationToken ct = default)
+    public static async Task<bool> IsInjectedAsync(string projectPath, CancellationToken ct = default)
     {
         var manifestPath = GetManifestPath(projectPath);
         if (!File.Exists(manifestPath)) return false;
@@ -136,8 +133,7 @@ public static class UnityManifestManager
         {
             var json = await File.ReadAllTextAsync(manifestPath, System.Text.Encoding.UTF8, ct);
             var doc  = JsonNode.Parse(json);
-            return doc?["dependencies"]?[BridgePackageName] != null
-                   || doc?["dependencies"]?[CoplayPackageName] != null;
+            return doc?["dependencies"]?[CoplayPackageName] != null;
         }
         catch
         {

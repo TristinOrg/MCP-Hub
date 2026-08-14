@@ -2,7 +2,7 @@
 
 Unity MCP Hub is a desktop client that gives MCP clients such as Codex one stable endpoint for controlling multiple Unity Editor instances through the official [Coplay MCP for Unity](https://github.com/CoplayDev/unity-mcp).
 
-The Hub does not implement Unity commands. It downloads and validates one pinned Coplay Unity package into a shared local cache, temporarily injects local UPM references, starts the matching Coplay MCP server, and forwards `http://127.0.0.1:9000/mcp` to it. Coplay owns tool discovery, execution, and per-client multi-instance routing.
+The Hub does not implement Unity commands. It downloads one pinned Coplay Unity package into a shared local cache, adds its small auto-connect integration directly to that cached copy, injects one local UPM reference, starts the matching Coplay MCP server, and forwards `http://127.0.0.1:9000/mcp` to it. Coplay owns tool discovery, execution, and per-client multi-instance routing.
 
 ## Requirements
 
@@ -42,7 +42,7 @@ Codex and other MCP clients
  Coplay pkg    Coplay pkg
 ```
 
-The injected `com.tristin.unity-mcp-bridge` package contains only startup configuration and a pinned dependency on Coplay. Both it and Coplay are injected with local `file:` references; individual Unity projects never clone Coplay. The bootstrap deliberately contains no duplicated tool handlers.
+Each Unity project loads only `com.coplaydev.unity-mcp` through a local `file:` reference. The cached package contains one Hub integration script that configures the local endpoint and starts Coplay's own bridge; there is no second package and no duplicated tool implementation.
 
 ## Build
 
