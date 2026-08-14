@@ -27,6 +27,7 @@ public sealed class CoplayMcpClient : IDisposable
 
     private sealed class InstancesResponse
     {
+        [System.Text.Json.Serialization.JsonPropertyName("instances")]
         public List<CoplayUnityInstance> Instances { get; init; } = [];
     }
 }
