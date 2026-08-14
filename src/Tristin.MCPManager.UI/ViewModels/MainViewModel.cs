@@ -115,7 +115,10 @@ public partial class MainViewModel : ObservableObject
     partial void OnIsScanningChanged(bool value) => ScanEditorsCommand.NotifyCanExecuteChanged();
 
     private bool CanConnect()
-        => !IsConnecting && SelectedEditor is { State: EditorState.Available or EditorState.Error };
+        => !IsConnecting
+           && SelectedEditor is { } editor
+           && (editor.State == EditorState.Available
+               || editor.State == EditorState.Error && !UnityManifestManager.HasBackup(editor.ProjectPath));
 
     private bool CanDisconnect()
         => !IsDisconnecting
@@ -226,16 +229,32 @@ public partial class MainViewModel : ObservableObject
 
     private async Task UpdateConnectionStatesAsync()
     {
-        IReadOnlyList<CoplayUnityInstance> connected;
+        IReadOnlyList<CoplayUnityInstance> connected = [];
         try { connected = await _coplayClient.ListInstancesAsync(_cts.Token); }
-        catch { return; }
+        catch (OperationCanceledException) when (_cts.IsCancellationRequested) { return; }
+        catch { }
 
         foreach (var editor in EditorInstances)
         {
-            if (connected.Any(instance => Matches(editor, instance)))
+            if (editor.State is EditorState.Connecting or EditorState.WaitingForCoplay or EditorState.Disconnecting)
+                continue;
+
+            var isManagedByHub = UnityManifestManager.HasBackup(editor.ProjectPath);
+            if (isManagedByHub && connected.Any(instance => Matches(editor, instance)))
+            {
                 editor.State = EditorState.Connected;
-            else if (editor.State == EditorState.Connected)
-                editor.State = EditorState.Available;
+                editor.ErrorMessage = null;
+            }
+            else if (isManagedByHub)
+            {
+                editor.State        = EditorState.Error;
+                editor.ErrorMessage = "Hub package state exists, but Coplay is not connected. Disconnect to restore the project.";
+            }
+            else
+            {
+                editor.State        = EditorState.Available;
+                editor.ErrorMessage = null;
+            }
         }
 
         ConnectCommand.NotifyCanExecuteChanged();

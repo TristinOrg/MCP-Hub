@@ -40,6 +40,24 @@ public sealed class UnityManifestManagerTests : IDisposable
     }
 
     [Fact]
+    public async Task RestoreAsync_PreservesManifestBytesExactly()
+    {
+        var projectPath  = CreateProject("{\"dependencies\":{}}");
+        var manifestPath = UnityManifestManager.GetManifestPath(projectPath);
+        var original     = new byte[] { 0xEF, 0xBB, 0xBF }
+            .Concat(System.Text.Encoding.UTF8.GetBytes("{\r\n  \"dependencies\": {}\r\n}\r\n"))
+            .ToArray();
+        var coplayPath = CreatePackage("coplay");
+        await File.WriteAllBytesAsync(manifestPath, original);
+
+        await UnityManifestManager.BackupAsync(projectPath);
+        await UnityManifestManager.InjectDependenciesAsync(projectPath, coplayPath);
+
+        Assert.True(await UnityManifestManager.RestoreAsync(projectPath));
+        Assert.Equal(original, await File.ReadAllBytesAsync(manifestPath));
+    }
+
+    [Fact]
     public async Task InjectDependenciesAsync_UsesSingleLocalCoplayReference()
     {
         var projectPath = CreateProject("{\"dependencies\":{}}");

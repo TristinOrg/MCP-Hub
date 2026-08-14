@@ -105,14 +105,13 @@ public static class UnityManifestManager
         if (!File.Exists(backupPath))
             return false;
 
-        var backupContent = await File.ReadAllTextAsync(backupPath, System.Text.Encoding.UTF8, ct);
-        await WriteAtomicallyAsync(manifestPath, backupContent, ct);
+        await CopyAtomicallyAsync(backupPath, manifestPath, ct);
 
         var lockPath       = GetLockPath(projectPath);
         var backupLockPath = Path.Combine(backupDir, LockFileName);
         var missingMarker  = Path.Combine(backupDir, MissingLockFileName);
         if (File.Exists(backupLockPath))
-            await CopyAsync(backupLockPath, lockPath, ct);
+            await CopyAtomicallyAsync(backupLockPath, lockPath, ct);
         else if (File.Exists(missingMarker) && File.Exists(lockPath))
             File.Delete(lockPath);
 
@@ -162,5 +161,20 @@ public static class UnityManifestManager
         var temporaryPath = path + ".tristin.tmp";
         await File.WriteAllTextAsync(temporaryPath, content, new System.Text.UTF8Encoding(false), ct);
         File.Move(temporaryPath, path, overwrite: true);
+    }
+
+    private static async Task CopyAtomicallyAsync(string sourcePath, string destinationPath, CancellationToken ct)
+    {
+        var temporaryPath = destinationPath + ".tristin.tmp";
+        try
+        {
+            await CopyAsync(sourcePath, temporaryPath, ct);
+            File.Move(temporaryPath, destinationPath, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+                File.Delete(temporaryPath);
+        }
     }
 }
