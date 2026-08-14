@@ -4,6 +4,8 @@ Unity MCP Hub is a Unity-specific Windows desktop hub that gives MCP clients suc
 
 This project is dedicated to Unity and is not a universal MCP server manager. The Hub does not reimplement Unity commands: it manages one pinned Coplay Unity package in a shared local cache, injects one local UPM reference, starts the matching Coplay MCP server, and forwards `http://127.0.0.1:9000/mcp` to it. Coplay owns tool discovery, execution, and per-client multi-instance routing.
 
+For MCP client configuration, multi-Unity routing, and a manual JSON-RPC/PowerShell example, see the [AI Agent Guide](MCP_AGENT_GUIDE.md).
+
 ## Requirements
 
 - .NET 8 SDK
